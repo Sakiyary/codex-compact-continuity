@@ -45,7 +45,8 @@ Expected files:
 - `<project>/.omx/continuity/latest.json`
 - `<project>/.omx/continuity/history_rollup.md`
 
-6. Ask the user to open `/hooks` in Codex and trust the new hook definition.
+6. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
+   Codex, and trust the new hook definition.
 
 ## Do Not
 

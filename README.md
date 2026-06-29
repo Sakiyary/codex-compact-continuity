@@ -64,8 +64,8 @@ and registers this hook command in `~/.codex/hooks.json`:
 node ~/.codex/hooks/compact-continuity/compact-continuity.mjs
 ```
 
-After installing or changing hooks, open `/hooks` in Codex and trust the updated
-hook definition.
+After installing or changing hooks, open Codex App -> Settings -> Hooks, or run
+`/hooks` in Codex, and trust the updated hook definition.
 
 ## Project Configuration
 
