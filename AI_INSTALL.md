@@ -48,6 +48,18 @@ Expected files:
 6. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
    Codex, and trust the new hook definition.
 
+## Cleanup
+
+If the user asks to remove this tool:
+
+1. Remove only this package's hook command from `~/.codex/hooks.json`.
+2. Remove `~/.codex/hooks/compact-continuity`.
+3. Remove `<project>/.omx/continuity` for each configured project, after
+   checking that the user does not keep unrelated local files there.
+4. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
+   Codex, and confirm the removed hook definition is no longer trusted or
+   listed.
+
 ## Do Not
 
 - Do not publish or commit the user's generated `projects.json`.

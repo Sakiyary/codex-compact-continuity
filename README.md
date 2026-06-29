@@ -127,6 +127,35 @@ Install this Codex hook package for /absolute/path/to/my-project. Use the
 project name MyProject. After installation, run the verification commands.
 ```
 
+## Cleanup
+
+To remove this tool:
+
+1. Remove this hook command from `~/.codex/hooks.json`:
+
+```text
+node ~/.codex/hooks/compact-continuity/compact-continuity.mjs
+```
+
+2. Remove the installed hook files:
+
+```bash
+rm -rf ~/.codex/hooks/compact-continuity
+```
+
+3. Remove generated continuity files from each project where you enabled the
+   tool:
+
+```bash
+rm -rf /absolute/path/to/my-project/.omx/continuity
+```
+
+4. Open Codex App -> Settings -> Hooks, or run `/hooks` in Codex, and confirm
+   the removed hook definition is no longer trusted or listed.
+
+If the project already uses `.omx/continuity` for other local workflows, inspect
+that directory before deleting it.
+
 ## Limits
 
 This tool cannot rewrite Codex's internal compacted model history. It works by
@@ -136,3 +165,8 @@ next agent to read them before using non-restore tools.
 That makes it stronger than prompt-only compact guidance, but weaker than a
 native Codex feature that preserves recent operational steps directly inside the
 post-compact context.
+
+This repository is a lightweight workaround for the current Codex hook and
+compaction behavior. It may become unnecessary if Codex adds stronger native
+post-compact continuity, context pins, recent-step preservation, or a first-class
+compaction extension point.
