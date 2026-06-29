@@ -118,17 +118,19 @@ Example:
 ```
 
 `continuity_path` is optional and defaults to `.codex-compact-continuity`.
-`state_path` and `session_state_path` are also optional. When present, the hook
-uses them to find active task state and Codex session metadata. Missing files are
-handled gracefully.
+`state_path` and `session_state_path` are also optional. They are not directories
+created by this package, and they are not required for the default workflow. Use
+them only when your project already has local files that record task or session
+state. Missing files are handled gracefully.
 
-For example, if a project already has local task/session state, you may
-explicitly add:
+The paths can point anywhere inside your project, including an existing `.omx`
+directory or any other local state directory you already use. Replace the
+placeholder paths below with your own files, or omit these fields entirely:
 
 ```json
 {
-  "state_path": ".task-state/current.json",
-  "session_state_path": ".task-state/session.json"
+  "state_path": ".your-local-state/current.json",
+  "session_state_path": ".your-local-state/session.json"
 }
 ```
 
