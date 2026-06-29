@@ -9,6 +9,7 @@ const HOOK_DIR = path.resolve(new URL(import.meta.url).pathname, "..");
 const DEFAULT_PROJECTS = [];
 const CODEX_HOME = path.resolve(process.env.COMPACT_CONTINUITY_CODEX_HOME || path.join(os.homedir(), ".codex"));
 const MAX_HISTORY_ROLLUP_ENTRIES = 8;
+const DEFAULT_CONTINUITY_PATH = ".codex-compact-continuity";
 
 function nowIso() {
   return new Date().toISOString();
@@ -95,12 +96,14 @@ function normalizeProject(project) {
     return null;
   }
   const ignored = project.ignored_child_roots || project.ignoredChildRoots || [];
-  const rootStatePath = project.state_path || project.statePath || path.join(".omx", "continuous-dev", "state.json");
-  const sessionStatePath = project.session_state_path || project.sessionStatePath || path.join(".omx", "state", "session.json");
+  const continuityPath = configValue(project, "continuity_path", "continuityPath", DEFAULT_CONTINUITY_PATH);
+  const rootStatePath = configValue(project, "state_path", "statePath", null);
+  const sessionStatePath = configValue(project, "session_state_path", "sessionStatePath", null);
   return {
     name: String(project.name),
     root: path.resolve(root),
     ignored_child_roots: new Set(Array.isArray(ignored) ? ignored.map(String) : []),
+    continuity_path: String(continuityPath || DEFAULT_CONTINUITY_PATH),
     root_state_path: rootStatePath,
     session_state_path: sessionStatePath,
   };
@@ -135,6 +138,16 @@ function matchesIgnoredChild(project, cwd) {
   return project.ignored_child_roots.has(firstSegment);
 }
 
+function configValue(project, snakeName, camelName, fallback) {
+  if (Object.prototype.hasOwnProperty.call(project, snakeName)) {
+    return project[snakeName];
+  }
+  if (Object.prototype.hasOwnProperty.call(project, camelName)) {
+    return project[camelName];
+  }
+  return fallback;
+}
+
 function resolveProject(cwd) {
   for (const project of configuredProjects()) {
     if (isInside(project.root, cwd) && !matchesIgnoredChild(project, cwd)) {
@@ -145,7 +158,7 @@ function resolveProject(cwd) {
 }
 
 function projectContext(project) {
-  const continuityDir = path.join(project.root, ".omx", "continuity");
+  const continuityDir = path.resolve(project.root, project.continuity_path);
   return {
     ...project,
     continuity_dir: continuityDir,
@@ -155,8 +168,8 @@ function projectContext(project) {
     history_rollup_json: path.join(continuityDir, "history_rollup.json"),
     history_rollup_md: path.join(continuityDir, "history_rollup.md"),
     restore_sentinel: path.join(continuityDir, "needs-restore.json"),
-    root_state: path.resolve(project.root, project.root_state_path),
-    session_state: path.resolve(project.root, project.session_state_path),
+    root_state: project.root_state_path ? path.resolve(project.root, project.root_state_path) : null,
+    session_state: project.session_state_path ? path.resolve(project.root, project.session_state_path) : null,
   };
 }
 
@@ -322,7 +335,7 @@ function extractRecentSessionEvents(sessionPath) {
 }
 
 function readSessionState(ctx, payload) {
-  const state = readJson(ctx.session_state, {});
+  const state = ctx.session_state ? readJson(ctx.session_state, {}) : {};
   const sessionId = payload?.session_id || payload?.sessionId || state.native_session_id || state.session_id || null;
   const sessionPath = findSessionPath(sessionId);
   return {
@@ -364,7 +377,14 @@ function listRepoStatuses(ctx) {
 }
 
 function relativeIfExists(ctx, filePath) {
+  if (!filePath) {
+    return null;
+  }
   return fs.existsSync(filePath) ? path.relative(ctx.root, filePath) : null;
+}
+
+function relativeProjectPath(ctx, filePath) {
+  return path.relative(ctx.root, filePath);
 }
 
 function absoluteProjectPath(ctx, relativePath) {
@@ -378,9 +398,9 @@ function existingProjectPath(ctx, relativePath) {
 function requiredReadPaths(ctx, snapshot) {
   const state = snapshot.state || {};
   const required = [
-    ".omx/continuity/latest.md",
-    ".omx/continuity/latest.json",
-    existingProjectPath(ctx, ".omx/continuity/history_rollup.md"),
+    relativeProjectPath(ctx, ctx.latest_md),
+    relativeProjectPath(ctx, ctx.latest_json),
+    relativeIfExists(ctx, ctx.history_rollup_md),
     state.source_path,
     existingProjectPath(ctx, state.audit_path),
     existingProjectPath(ctx, state.context_snapshot_path),
@@ -469,6 +489,7 @@ ${entries.length > 0 ? entries.join("\n\n") : "- none"}
 function buildSnapshot(ctx, payload) {
   const rootStateSource = relativeIfExists(ctx, ctx.root_state);
   const state = summarizeState(readJson(ctx.root_state, {}), rootStateSource);
+  const latestMdPath = relativeProjectPath(ctx, ctx.latest_md);
   return {
     schema_version: 2,
     project: ctx.name,
@@ -485,7 +506,7 @@ function buildSnapshot(ctx, payload) {
       repos: listRepoStatuses(ctx),
     },
     restore_protocol: [
-      "Read .omx/continuity/latest.md before doing any write, test, git, service, or destructive action after compact.",
+      `Read ${latestMdPath} before doing any write, test, git, service, or destructive action after compact.`,
       "Read project state, audit, context, and active docs named in latest.md when present.",
       "Continue from the active cursor captured here; do not restart discovery from old transcript memory.",
       "Respect non-goals and user corrections captured in recent session signals.",
@@ -577,8 +598,8 @@ function requiredFirstReads(ctx, latest) {
     return [...new Set(latest.required_read_paths)];
   }
   return requiredReadPaths(ctx, latest).length > 0 ? requiredReadPaths(ctx, latest) : [
-    ".omx/continuity/latest.md",
-    ".omx/continuity/latest.json",
+    relativeProjectPath(ctx, ctx.latest_md),
+    relativeProjectPath(ctx, ctx.latest_json),
     latest.state?.source_path || null,
   ].filter(Boolean);
 }

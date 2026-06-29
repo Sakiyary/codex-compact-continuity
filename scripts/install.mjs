@@ -149,8 +149,7 @@ function buildProjectsConfig(options) {
       name: project.name,
       root: path.resolve(project.value),
       ignored_child_roots: ignoresByProject.get(project.name) || [],
-      state_path: ".omx/continuous-dev/state.json",
-      session_state_path: ".omx/state/session.json",
+      continuity_path: ".codex-compact-continuity",
     })),
   };
 }

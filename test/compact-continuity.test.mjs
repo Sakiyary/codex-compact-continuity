@@ -44,15 +44,19 @@ const growxRoot = path.join(tempRoot, "DocsProject");
 const frontendRoot = path.join(judgRoot, "example-frontend");
 const outsideRoot = path.join(tempRoot, "unrelated");
 const codexHome = path.join(tempRoot, "codex-home");
+const continuityDirName = ".codex-compact-continuity";
 const projects = [
   {
     name: "ExampleMonorepo",
     root: judgRoot,
     ignored_child_roots: ["example-frontend"],
+    state_path: ".omx/continuous-dev/state.json",
+    session_state_path: ".omx/state/session.json",
   },
   {
     name: "DocsProject",
     root: growxRoot,
+    session_state_path: ".omx/state/session.json",
   },
 ];
 
@@ -101,7 +105,7 @@ writeJson(path.join(growxRoot, ".omx", "state", "session.json"), {
   cwd: growxRoot,
 });
 
-writeJson(path.join(judgRoot, ".omx", "continuity", "history_rollup.json"), {
+writeJson(path.join(judgRoot, continuityDirName, "history_rollup.json"), {
   schema_version: 1,
   project: "ExampleMonorepo",
   updated_at: "2026-06-29T00:00:00.000Z",
@@ -170,7 +174,7 @@ const judgPreCompact = runHook(judgRoot, codexHome, projectsFile, {
 assert.equal(judgPreCompact.status, 0, judgPreCompact.stderr);
 assert.equal(JSON.parse(judgPreCompact.stdout).decision ?? "allow", "allow");
 
-const judgLatestMarkdown = fs.readFileSync(path.join(judgRoot, ".omx", "continuity", "latest.md"), "utf8");
+const judgLatestMarkdown = fs.readFileSync(path.join(judgRoot, continuityDirName, "latest.md"), "utf8");
 assert.match(judgLatestMarkdown, /Project: ExampleMonorepo/);
 assert.match(judgLatestMarkdown, /example\.runner_kafka_sandbox/);
 assert.match(judgLatestMarkdown, /Previous compact preserved database decision/);
@@ -178,16 +182,17 @@ assert.match(judgLatestMarkdown, /Cumulative History Rollup/);
 assert.match(judgLatestMarkdown, /必须先读 handoff/);
 assert.match(judgLatestMarkdown, /git -C example-docs diff --check/);
 
-const judgLatestJson = readJson(path.join(judgRoot, ".omx", "continuity", "latest.json"));
+const judgLatestJson = readJson(path.join(judgRoot, continuityDirName, "latest.json"));
 assert.equal(judgLatestJson.project, "ExampleMonorepo");
 assert.equal(judgLatestJson.compact.trigger, "auto");
 assert.equal(judgLatestJson.state.active_checkpoint_id, "example.runner_kafka_sandbox.next_checkpoint_selection_after_real_autoscaler_runner_lifecycle_mvp_module_v1");
 assert.ok(judgLatestJson.session.recent_events.length >= 2);
 assert.ok(judgLatestJson.history_rollup.entries.length >= 2);
-assert.ok(judgLatestJson.required_read_paths.includes(".omx/continuity/history_rollup.md"));
+assert.ok(judgLatestJson.required_read_paths.includes(`${continuityDirName}/history_rollup.md`));
 assert.ok(judgLatestJson.required_read_paths.includes("example-docs/implementation/progress.md"));
+assert.equal(fs.existsSync(path.join(judgRoot, ".omx", "continuity", "latest.md")), false);
 
-const rollupMarkdown = fs.readFileSync(path.join(judgRoot, ".omx", "continuity", "history_rollup.md"), "utf8");
+const rollupMarkdown = fs.readFileSync(path.join(judgRoot, continuityDirName, "history_rollup.md"), "utf8");
 assert.match(rollupMarkdown, /Previous compact preserved database decision/);
 assert.match(rollupMarkdown, /Select next backend\/judge MVP module/);
 
@@ -197,10 +202,10 @@ const growxPreCompact = runHook(growxRoot, codexHome, projectsFile, {
   cwd: growxRoot,
 });
 assert.equal(growxPreCompact.status, 0, growxPreCompact.stderr);
-const growxLatestMarkdown = fs.readFileSync(path.join(growxRoot, ".omx", "continuity", "latest.md"), "utf8");
+const growxLatestMarkdown = fs.readFileSync(path.join(growxRoot, continuityDirName, "latest.md"), "utf8");
 assert.match(growxLatestMarkdown, /Project: DocsProject/);
 assert.match(growxLatestMarkdown, /Docs project should restore latest project context after compact/);
-assert.equal(readJson(path.join(growxRoot, ".omx", "continuity", "latest.json")).project, "DocsProject");
+assert.equal(readJson(path.join(growxRoot, continuityDirName, "latest.json")).project, "DocsProject");
 
 const ignoredFrontend = runHook(frontendRoot, codexHome, projectsFile, {
   hook_event_name: "PreCompact",
@@ -208,7 +213,7 @@ const ignoredFrontend = runHook(frontendRoot, codexHome, projectsFile, {
 });
 assert.equal(ignoredFrontend.status, 0, ignoredFrontend.stderr);
 assert.deepEqual(JSON.parse(ignoredFrontend.stdout), {});
-assert.equal(fs.existsSync(path.join(frontendRoot, ".omx", "continuity", "latest.md")), false);
+assert.equal(fs.existsSync(path.join(frontendRoot, continuityDirName, "latest.md")), false);
 
 const outsideProject = runHook(outsideRoot, codexHome, projectsFile, {
   hook_event_name: "PreCompact",
@@ -216,7 +221,7 @@ const outsideProject = runHook(outsideRoot, codexHome, projectsFile, {
 });
 assert.equal(outsideProject.status, 0, outsideProject.stderr);
 assert.deepEqual(JSON.parse(outsideProject.stdout), {});
-assert.equal(fs.existsSync(path.join(outsideRoot, ".omx", "continuity", "latest.md")), false);
+assert.equal(fs.existsSync(path.join(outsideRoot, continuityDirName, "latest.md")), false);
 
 const postCompact = runHook(judgRoot, codexHome, projectsFile, {
   hook_event_name: "PostCompact",
@@ -224,12 +229,12 @@ const postCompact = runHook(judgRoot, codexHome, projectsFile, {
   cwd: judgRoot,
 });
 assert.equal(postCompact.status, 0, postCompact.stderr);
-const sentinelPath = path.join(judgRoot, ".omx", "continuity", "needs-restore.json");
+const sentinelPath = path.join(judgRoot, continuityDirName, "needs-restore.json");
 const armedSentinel = readJson(sentinelPath);
 assert.equal(armedSentinel.restored, false);
-assert.ok(armedSentinel.required_first_reads.includes(".omx/continuity/latest.md"));
-assert.ok(armedSentinel.required_first_reads.includes(".omx/continuity/latest.json"));
-assert.ok(armedSentinel.required_first_reads.includes(".omx/continuity/history_rollup.md"));
+assert.ok(armedSentinel.required_first_reads.includes(`${continuityDirName}/latest.md`));
+assert.ok(armedSentinel.required_first_reads.includes(`${continuityDirName}/latest.json`));
+assert.ok(armedSentinel.required_first_reads.includes(`${continuityDirName}/history_rollup.md`));
 assert.ok(armedSentinel.required_first_reads.includes(".omx/continuous-dev/state.json"));
 assert.ok(armedSentinel.required_first_reads.includes("example-docs/implementation/progress.md"));
 
@@ -245,14 +250,14 @@ assert.equal(blockedTool.status, 0, blockedTool.stderr);
 const blockedPayload = JSON.parse(blockedTool.stdout);
 assert.equal(blockedPayload.decision, "block");
 assert.match(blockedPayload.systemMessage, /ExampleMonorepo compact continuity restore/);
-assert.match(blockedPayload.systemMessage, /\.omx\/continuity\/latest\.md/);
+assert.match(blockedPayload.systemMessage, /\.codex-compact-continuity\/latest\.md/);
 
 const readLatestMd = runHook(judgRoot, codexHome, projectsFile, {
   hook_event_name: "PostToolUse",
   cwd: judgRoot,
   tool_name: "Bash",
   tool_input: {
-    cmd: "sed -n '1,220p' .omx/continuity/latest.md",
+    cmd: `sed -n '1,220p' ${continuityDirName}/latest.md`,
   },
   tool_response: {
     exit_code: 0,
@@ -261,8 +266,8 @@ const readLatestMd = runHook(judgRoot, codexHome, projectsFile, {
 assert.equal(readLatestMd.status, 0, readLatestMd.stderr);
 assert.equal(fs.existsSync(sentinelPath), true, "reading only latest.md must not clear restore sentinel");
 assert.deepEqual(readJson(sentinelPath).missing_reads.sort(), [
-  ".omx/continuity/history_rollup.md",
-  ".omx/continuity/latest.json",
+  `${continuityDirName}/history_rollup.md`,
+  `${continuityDirName}/latest.json`,
   ".omx/continuous-dev/state.json",
   ".omx/audit/current.md",
   ".omx/context/current.json",
@@ -286,7 +291,7 @@ const readRemaining = runHook(judgRoot, codexHome, projectsFile, {
   cwd: judgRoot,
   tool_name: "Bash",
   tool_input: {
-    cmd: "cat .omx/continuity/latest.json .omx/continuity/history_rollup.md .omx/continuous-dev/state.json .omx/audit/current.md .omx/context/current.json example-docs/implementation/progress.md example-docs/implementation/capability-roadmap.md",
+    cmd: `cat ${continuityDirName}/latest.json ${continuityDirName}/history_rollup.md .omx/continuous-dev/state.json .omx/audit/current.md .omx/context/current.json example-docs/implementation/progress.md example-docs/implementation/capability-roadmap.md`,
   },
   tool_response: {
     exit_code: 0,

@@ -21,20 +21,25 @@ handoff restore before normal tool use continues.
 ## How It Works
 
 - `PreCompact` writes a bounded handoff snapshot:
-  - `<project>/.omx/continuity/latest.md`
-  - `<project>/.omx/continuity/latest.json`
-  - `<project>/.omx/continuity/snapshots/*.json`
+  - `<project>/.codex-compact-continuity/latest.md`
+  - `<project>/.codex-compact-continuity/latest.json`
+  - `<project>/.codex-compact-continuity/snapshots/*.json`
 - `PreCompact` also updates cumulative history:
-  - `<project>/.omx/continuity/history_rollup.md`
-  - `<project>/.omx/continuity/history_rollup.json`
+  - `<project>/.codex-compact-continuity/history_rollup.md`
+  - `<project>/.codex-compact-continuity/history_rollup.json`
 - `PostCompact` arms a restore sentinel:
-  - `<project>/.omx/continuity/needs-restore.json`
+  - `<project>/.codex-compact-continuity/needs-restore.json`
 - `PreToolUse` blocks non-restore tool calls while the sentinel is armed.
 - `PostToolUse` records which required files have been read and clears the
   sentinel only after all required reads are observed.
 
 The hook is registered globally, but it no-ops unless the hook payload `cwd` is
 inside a configured project root.
+
+This package does not require oh-my-codex. It uses its own project-local
+continuity directory by default. If you already keep task state in another
+system, including oh-my-codex, you can point the optional `state_path` and
+`session_state_path` fields at those files.
 
 ## Install
 
@@ -84,16 +89,25 @@ Example:
       "name": "my-project",
       "root": "/absolute/path/to/my-project",
       "ignored_child_roots": [],
-      "state_path": ".omx/continuous-dev/state.json",
-      "session_state_path": ".omx/state/session.json"
+      "continuity_path": ".codex-compact-continuity"
     }
   ]
 }
 ```
 
-`state_path` and `session_state_path` are optional. When present, the hook uses
-them to find active task state and Codex session metadata. Missing files are
+`continuity_path` is optional and defaults to `.codex-compact-continuity`.
+`state_path` and `session_state_path` are also optional. When present, the hook
+uses them to find active task state and Codex session metadata. Missing files are
 handled gracefully.
+
+For example, if a project already has oh-my-codex state, you may explicitly add:
+
+```json
+{
+  "state_path": ".omx/continuous-dev/state.json",
+  "session_state_path": ".omx/state/session.json"
+}
+```
 
 ## Verify
 
@@ -110,9 +124,9 @@ printf '{"hook_event_name":"PreCompact","trigger":"auto","cwd":"/absolute/path/t
 
 Expected files:
 
-- `<project>/.omx/continuity/latest.md`
-- `<project>/.omx/continuity/latest.json`
-- `<project>/.omx/continuity/history_rollup.md`
+- `<project>/.codex-compact-continuity/latest.md`
+- `<project>/.codex-compact-continuity/latest.json`
+- `<project>/.codex-compact-continuity/history_rollup.md`
 
 ## AI-Assisted Installation
 
@@ -144,17 +158,17 @@ rm -rf ~/.codex/hooks/compact-continuity
 ```
 
 3. Remove generated continuity files from each project where you enabled the
-   tool:
+   tool. With the default configuration:
 
 ```bash
-rm -rf /absolute/path/to/my-project/.omx/continuity
+rm -rf /absolute/path/to/my-project/.codex-compact-continuity
 ```
 
 4. Open Codex App -> Settings -> Hooks, or run `/hooks` in Codex, and confirm
    the removed hook definition is no longer trusted or listed.
 
-If the project already uses `.omx/continuity` for other local workflows, inspect
-that directory before deleting it.
+If you configured a custom `continuity_path`, remove that directory instead and
+inspect it before deleting if other local workflows may write there.
 
 ## Limits
 

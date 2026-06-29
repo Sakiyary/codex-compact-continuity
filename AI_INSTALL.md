@@ -41,9 +41,9 @@ printf '{"hook_event_name":"PreCompact","trigger":"auto","cwd":"/absolute/path/t
 
 Expected files:
 
-- `<project>/.omx/continuity/latest.md`
-- `<project>/.omx/continuity/latest.json`
-- `<project>/.omx/continuity/history_rollup.md`
+- `<project>/.codex-compact-continuity/latest.md`
+- `<project>/.codex-compact-continuity/latest.json`
+- `<project>/.codex-compact-continuity/history_rollup.md`
 
 6. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
    Codex, and trust the new hook definition.
@@ -54,8 +54,9 @@ If the user asks to remove this tool:
 
 1. Remove only this package's hook command from `~/.codex/hooks.json`.
 2. Remove `~/.codex/hooks/compact-continuity`.
-3. Remove `<project>/.omx/continuity` for each configured project, after
-   checking that the user does not keep unrelated local files there.
+3. Remove `<project>/.codex-compact-continuity`, or the configured
+   `continuity_path`, for each configured project after checking that the user
+   does not keep unrelated local files there.
 4. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
    Codex, and confirm the removed hook definition is no longer trusted or
    listed.
@@ -66,3 +67,4 @@ If the user asks to remove this tool:
 - Do not remove unrelated hooks from `~/.codex/hooks.json`.
 - Do not assume relative project paths; use absolute paths.
 - Do not continue if the verification commands fail.
+- Do not assume oh-my-codex is installed. This tool works without it.
