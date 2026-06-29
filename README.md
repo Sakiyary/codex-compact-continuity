@@ -55,10 +55,10 @@ generated files inside that directory. The project-level `.gitignore` entry is
 still recommended because it hides the whole local state directory from normal
 Git status output.
 
-This package does not require oh-my-codex. It uses its own project-local
-continuity directory by default. If you already keep task state in another
-system, including oh-my-codex, you can point the optional `state_path` and
-`session_state_path` fields at those files.
+This package is self-contained. It uses its own project-local continuity
+directory by default. If you already keep task or session state in another local
+file, you can point the optional `state_path` and `session_state_path` fields at
+those files.
 
 ## Install
 
@@ -122,12 +122,13 @@ Example:
 uses them to find active task state and Codex session metadata. Missing files are
 handled gracefully.
 
-For example, if a project already has oh-my-codex state, you may explicitly add:
+For example, if a project already has local task/session state, you may
+explicitly add:
 
 ```json
 {
-  "state_path": ".omx/continuous-dev/state.json",
-  "session_state_path": ".omx/state/session.json"
+  "state_path": ".task-state/current.json",
+  "session_state_path": ".task-state/session.json"
 }
 ```
 

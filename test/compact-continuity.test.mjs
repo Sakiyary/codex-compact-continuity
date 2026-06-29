@@ -50,13 +50,13 @@ const projects = [
     name: "ExampleMonorepo",
     root: judgRoot,
     ignored_child_roots: ["example-frontend"],
-    state_path: ".omx/continuous-dev/state.json",
-    session_state_path: ".omx/state/session.json",
+    state_path: ".task-state/current.json",
+    session_state_path: ".task-state/session.json",
   },
   {
     name: "DocsProject",
     root: growxRoot,
-    session_state_path: ".omx/state/session.json",
+    session_state_path: ".task-state/session.json",
   },
 ];
 
@@ -65,7 +65,7 @@ fs.mkdirSync(frontendRoot, { recursive: true });
 fs.mkdirSync(growxRoot, { recursive: true });
 fs.mkdirSync(outsideRoot, { recursive: true });
 
-writeJson(path.join(judgRoot, ".omx", "continuous-dev", "state.json"), {
+writeJson(path.join(judgRoot, ".task-state", "current.json"), {
   schema_version: 4,
   active: true,
   active_capability_id: "example.runner_kafka_sandbox",
@@ -78,8 +78,8 @@ writeJson(path.join(judgRoot, ".omx", "continuous-dev", "state.json"), {
       "example-docs/implementation/progress.md",
       "example-docs/implementation/capability-roadmap.md",
     ],
-    audit_path: ".omx/audit/current.md",
-    context_snapshot_path: ".omx/context/current.json",
+    audit_path: ".task-state/audit/current.md",
+    context_snapshot_path: ".task-state/context/current.json",
     non_goals_until_next_checkpoint: [
       "do not select a single DTO, helper, telemetry metric, smoke assertion, flag flip or port note",
     ],
@@ -92,15 +92,15 @@ writeJson(path.join(judgRoot, ".omx", "continuous-dev", "state.json"), {
 
 writeText(path.join(judgRoot, "example-docs", "implementation", "progress.md"), "# Progress\n");
 writeText(path.join(judgRoot, "example-docs", "implementation", "capability-roadmap.md"), "# Roadmap\n");
-writeText(path.join(judgRoot, ".omx", "audit", "current.md"), "# Audit\n");
-writeJson(path.join(judgRoot, ".omx", "context", "current.json"), { ok: true });
+writeText(path.join(judgRoot, ".task-state", "audit", "current.md"), "# Audit\n");
+writeJson(path.join(judgRoot, ".task-state", "context", "current.json"), { ok: true });
 
-writeJson(path.join(judgRoot, ".omx", "state", "session.json"), {
+writeJson(path.join(judgRoot, ".task-state", "session.json"), {
   native_session_id: "019f-test-session",
   cwd: judgRoot,
 });
 
-writeJson(path.join(growxRoot, ".omx", "state", "session.json"), {
+writeJson(path.join(growxRoot, ".task-state", "session.json"), {
   native_session_id: "019f-growx-session",
   cwd: growxRoot,
 });
@@ -191,7 +191,7 @@ assert.ok(judgLatestJson.session.recent_events.length >= 2);
 assert.ok(judgLatestJson.history_rollup.entries.length >= 2);
 assert.ok(judgLatestJson.required_read_paths.includes(`${continuityDirName}/history_rollup.md`));
 assert.ok(judgLatestJson.required_read_paths.includes("example-docs/implementation/progress.md"));
-assert.equal(fs.existsSync(path.join(judgRoot, ".omx", "continuity", "latest.md")), false);
+assert.equal(fs.existsSync(path.join(judgRoot, ".task-state", "continuity", "latest.md")), false);
 
 const rollupMarkdown = fs.readFileSync(path.join(judgRoot, continuityDirName, "history_rollup.md"), "utf8");
 assert.match(rollupMarkdown, /Previous compact preserved database decision/);
@@ -236,7 +236,7 @@ assert.equal(armedSentinel.restored, false);
 assert.ok(armedSentinel.required_first_reads.includes(`${continuityDirName}/latest.md`));
 assert.ok(armedSentinel.required_first_reads.includes(`${continuityDirName}/latest.json`));
 assert.ok(armedSentinel.required_first_reads.includes(`${continuityDirName}/history_rollup.md`));
-assert.ok(armedSentinel.required_first_reads.includes(".omx/continuous-dev/state.json"));
+assert.ok(armedSentinel.required_first_reads.includes(".task-state/current.json"));
 assert.ok(armedSentinel.required_first_reads.includes("example-docs/implementation/progress.md"));
 
 const blockedTool = runHook(judgRoot, codexHome, projectsFile, {
@@ -280,9 +280,9 @@ assert.equal(fs.existsSync(sentinelPath), true, "reading only latest.md must not
 assert.deepEqual(readJson(sentinelPath).missing_reads.sort(), [
   `${continuityDirName}/history_rollup.md`,
   `${continuityDirName}/latest.json`,
-  ".omx/continuous-dev/state.json",
-  ".omx/audit/current.md",
-  ".omx/context/current.json",
+  ".task-state/current.json",
+  ".task-state/audit/current.md",
+  ".task-state/context/current.json",
   "example-docs/implementation/capability-roadmap.md",
   "example-docs/implementation/progress.md",
 ].sort());
@@ -328,7 +328,7 @@ const readRemaining = runHook(judgRoot, codexHome, projectsFile, {
   cwd: judgRoot,
   tool_name: "Bash",
   tool_input: {
-    cmd: `cat ${continuityDirName}/latest.json ${continuityDirName}/history_rollup.md .omx/continuous-dev/state.json .omx/audit/current.md .omx/context/current.json example-docs/implementation/progress.md example-docs/implementation/capability-roadmap.md`,
+    cmd: `cat ${continuityDirName}/latest.json ${continuityDirName}/history_rollup.md .task-state/current.json .task-state/audit/current.md .task-state/context/current.json example-docs/implementation/progress.md example-docs/implementation/capability-roadmap.md`,
   },
   tool_response: {
     exit_code: 0,

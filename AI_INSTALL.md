@@ -79,4 +79,5 @@ If the user asks to remove this tool:
 - Do not remove unrelated hooks from `~/.codex/hooks.json`.
 - Do not assume relative project paths; use absolute paths.
 - Do not continue if the verification commands fail.
-- Do not assume oh-my-codex is installed. This tool works without it.
+- Do not assume any external state system is installed. This tool works on its
+  own.
