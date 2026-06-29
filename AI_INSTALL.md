@@ -24,7 +24,12 @@ files.
 If the user configured a custom `continuity_path`, ignore that directory
 instead.
 
-4. From this repository, run:
+4. If the user already uses oh-my-codex or another local state system, ask
+   whether they want to wire existing state files into `state_path` or
+   `session_state_path`. These fields are optional. Do not invent paths, and do
+   not require oh-my-codex for installation.
+
+5. From this repository, run:
 
 ```bash
 node scripts/install.mjs --project ProjectName=/absolute/path/to/project
@@ -36,13 +41,13 @@ If a child directory should be ignored, add:
 --ignore ProjectName=child-dir
 ```
 
-5. Verify:
+6. Verify:
 
 ```bash
 npm run verify
 ```
 
-6. Simulate a compact for the configured project:
+7. Simulate a compact for the configured project:
 
 ```bash
 printf '{"hook_event_name":"PreCompact","trigger":"auto","cwd":"/absolute/path/to/project"}' \
@@ -55,7 +60,7 @@ Expected files:
 - `<project>/.codex-compact-continuity/latest.json`
 - `<project>/.codex-compact-continuity/history_rollup.md`
 
-7. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
+8. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
    Codex, and trust the new hook definition.
 
 ## Cleanup

@@ -60,6 +60,20 @@ directory by default. If you already keep task or session state in another local
 file, you can point the optional `state_path` and `session_state_path` fields at
 those files.
 
+## Optional State Integrations
+
+This package does not require an external state manager. It can work by writing
+and restoring its own compact-continuity files.
+
+If your project already uses [oh-my-codex](https://github.com/Sakiyary/oh-my-codex)
+or another local state system, those files can improve the quality of the
+handoff. In that case, set `state_path` or `session_state_path` to the concrete
+state files your project already has, including files under an existing `.omx`
+directory.
+
+Do not add optional state paths just because they appear in an example. Only
+configure paths that exist in your project, or omit these fields entirely.
+
 ## Install
 
 From this repository:
