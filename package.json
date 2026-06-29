@@ -1,0 +1,23 @@
+{
+  "name": "codex-compact-continuity",
+  "version": "0.1.0",
+  "description": "Codex hooks that preserve operational continuity across context compaction.",
+  "type": "module",
+  "bin": {
+    "codex-compact-continuity-install": "./scripts/install.mjs"
+  },
+  "scripts": {
+    "check": "node --check src/compact-continuity.mjs && node --check test/compact-continuity.test.mjs && node --check scripts/install.mjs",
+    "test": "node test/compact-continuity.test.mjs",
+    "verify": "npm run check && npm test"
+  },
+  "keywords": [
+    "codex",
+    "hooks",
+    "compaction",
+    "continuity",
+    "ai-agent"
+  ],
+  "author": "Sakiyary <sakiyary19@qq.com>",
+  "license": "MIT"
+}

@@ -1,0 +1,11 @@
+{
+  "projects": [
+    {
+      "name": "example-project",
+      "root": "/absolute/path/to/example-project",
+      "ignored_child_roots": [],
+      "state_path": ".omx/continuous-dev/state.json",
+      "session_state_path": ".omx/state/session.json"
+    }
+  ]
+}

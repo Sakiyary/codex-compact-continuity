@@ -1,0 +1,55 @@
+# AI-Assisted Installation Guide
+
+This file is written for an AI coding assistant helping a user install Codex
+Compact Continuity.
+
+## Goal
+
+Install a global Codex hook that only activates inside the user's configured
+project roots. The hook preserves compact handoff state and blocks normal tool
+use after compaction until the restored agent reads the required continuity
+files.
+
+## Steps
+
+1. Identify the user's project root as an absolute path.
+2. Choose a short project name.
+3. From this repository, run:
+
+```bash
+node scripts/install.mjs --project ProjectName=/absolute/path/to/project
+```
+
+If a child directory should be ignored, add:
+
+```bash
+--ignore ProjectName=child-dir
+```
+
+4. Verify:
+
+```bash
+npm run verify
+```
+
+5. Simulate a compact for the configured project:
+
+```bash
+printf '{"hook_event_name":"PreCompact","trigger":"auto","cwd":"/absolute/path/to/project"}' \
+  | node ~/.codex/hooks/compact-continuity/compact-continuity.mjs
+```
+
+Expected files:
+
+- `<project>/.omx/continuity/latest.md`
+- `<project>/.omx/continuity/latest.json`
+- `<project>/.omx/continuity/history_rollup.md`
+
+6. Ask the user to open `/hooks` in Codex and trust the new hook definition.
+
+## Do Not
+
+- Do not publish or commit the user's generated `projects.json`.
+- Do not remove unrelated hooks from `~/.codex/hooks.json`.
+- Do not assume relative project paths; use absolute paths.
+- Do not continue if the verification commands fail.
