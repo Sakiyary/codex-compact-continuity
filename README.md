@@ -36,6 +36,25 @@ handoff restore before normal tool use continues.
 The hook is registered globally, but it no-ops unless the hook payload `cwd` is
 inside a configured project root.
 
+## Privacy And Git Safety
+
+The generated continuity files may contain task context, recent session signals,
+command summaries, repo status, and short tool-output excerpts. Treat
+`<project>/.codex-compact-continuity/` as local working state, not source code.
+
+Add the default generated directory to each target project's `.gitignore`
+unless you intentionally want to version this state:
+
+```gitignore
+.codex-compact-continuity/
+```
+
+As a second line of defense, the hook writes
+`<project>/.codex-compact-continuity/.gitignore` with rules that ignore the
+generated files inside that directory. The project-level `.gitignore` entry is
+still recommended because it hides the whole local state directory from normal
+Git status output.
+
 This package does not require oh-my-codex. It uses its own project-local
 continuity directory by default. If you already keep task state in another
 system, including oh-my-codex, you can point the optional `state_path` and
@@ -71,6 +90,9 @@ node ~/.codex/hooks/compact-continuity/compact-continuity.mjs
 
 After installing or changing hooks, open Codex App -> Settings -> Hooks, or run
 `/hooks` in Codex, and trust the updated hook definition.
+
+Also add `.codex-compact-continuity/` to the target project's `.gitignore` unless
+you have configured a different `continuity_path`.
 
 ## Project Configuration
 
@@ -169,6 +191,9 @@ rm -rf /absolute/path/to/my-project/.codex-compact-continuity
 
 If you configured a custom `continuity_path`, remove that directory instead and
 inspect it before deleting if other local workflows may write there.
+
+If you added the generated directory to a project `.gitignore`, remove that line
+too.
 
 ## Limits
 

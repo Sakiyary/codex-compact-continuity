@@ -67,6 +67,13 @@ function writeTextAtomic(filePath, value) {
   fs.renameSync(tmpPath, filePath);
 }
 
+function ensureContinuityGitignore(ctx) {
+  const gitignorePath = path.join(ctx.continuity_dir, ".gitignore");
+  if (!fs.existsSync(gitignorePath)) {
+    writeTextAtomic(gitignorePath, "*\n!.gitignore\n");
+  }
+}
+
 function safeUnlink(filePath) {
   try {
     fs.unlinkSync(filePath);
@@ -582,6 +589,7 @@ ${markdownList(repos)}
 }
 
 function handlePreCompact(ctx, payload) {
+  ensureContinuityGitignore(ctx);
   const snapshot = buildSnapshot(ctx, payload);
   const historyRollup = updateHistoryRollup(ctx, snapshot);
   snapshot.history_rollup = historyRollup;
@@ -662,26 +670,45 @@ function restoreMissingReads(ctx, sentinel = readRestoreSentinel(ctx)) {
   return restoreRequiredReadPaths(ctx, sentinel).filter((requiredPath) => !observed.has(requiredPath));
 }
 
-function commandMentionedReadPaths(requiredPaths, command) {
-  const text = String(command || "");
-  return requiredPaths.filter((requiredPath) => text.includes(requiredPath));
+function escapeRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function updateRestoreProgress(ctx, command) {
+function pathReferenceVariants(ctx, requiredPath) {
+  return [
+    requiredPath,
+    `./${requiredPath}`,
+    absoluteProjectPath(ctx, requiredPath),
+  ].filter(Boolean);
+}
+
+function textMentionsPathReference(text, reference) {
+  const pattern = new RegExp(`(^|[^A-Za-z0-9_./-])${escapeRegex(reference)}($|[^A-Za-z0-9_./-])`);
+  return pattern.test(String(text || ""));
+}
+
+function mentionedReadPaths(ctx, requiredPaths, evidenceText) {
+  const text = String(evidenceText || "");
+  return requiredPaths.filter((requiredPath) =>
+    pathReferenceVariants(ctx, requiredPath).some((reference) => textMentionsPathReference(text, reference)),
+  );
+}
+
+function updateRestoreProgress(ctx, readEvidence) {
   const sentinel = readRestoreSentinel(ctx);
   if (!sentinel) {
     return false;
   }
   const required = restoreRequiredReadPaths(ctx, sentinel);
   const observed = new Set(restoreObservedReads(sentinel));
-  for (const readPath of commandMentionedReadPaths(required, command)) {
+  for (const readPath of mentionedReadPaths(ctx, required, readEvidence)) {
     observed.add(readPath);
   }
   const observedReads = [...observed];
   const missingReads = required.filter((requiredPath) => !observed.has(requiredPath));
   writeJsonAtomic(path.join(ctx.continuity_dir, "last-restore-ack.json"), {
     acknowledged_at: nowIso(),
-    command: truncate(command, 1000),
+    read_evidence: truncate(readEvidence, 1000),
     observed_reads: observedReads,
     missing_reads: missingReads,
   });
@@ -705,7 +732,60 @@ function isReadOfContinuity(ctx, command, candidatePaths = restoreRequiredReadPa
   if (/[;&|<>]/.test(text)) {
     return false;
   }
-  return commandMentionedReadPaths(candidatePaths, text).length > 0;
+  return mentionedReadPaths(ctx, candidatePaths, text).length > 0;
+}
+
+function isShellToolName(name) {
+  return name === "Bash" || name === "exec_command" || name === "functions.exec_command" || name === "";
+}
+
+function isReadOnlyToolName(name) {
+  const normalized = String(name || "").toLowerCase();
+  const leaf = normalized.split(/[:.]/).pop().split("__").pop();
+  return [
+    "read",
+    "read_file",
+    "readfile",
+    "read_mcp_resource",
+    "view_file",
+    "viewfile",
+  ].includes(leaf);
+}
+
+function collectPathLikeValues(value, results = []) {
+  if (typeof value === "string") {
+    results.push(value);
+    return results;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectPathLikeValues(item, results);
+    }
+    return results;
+  }
+  if (!value || typeof value !== "object") {
+    return results;
+  }
+  for (const [key, nested] of Object.entries(value)) {
+    if (/^(path|paths|file|files|file_path|filePath|filename|uri)$/i.test(key)) {
+      collectPathLikeValues(nested, results);
+    }
+  }
+  return results;
+}
+
+function restoreReadEvidence(ctx, payload, candidatePaths = restoreRequiredReadPaths(ctx)) {
+  const name = toolName(payload);
+  const input = toolInput(payload);
+  const command = commandFromToolInput(input);
+  if (isShellToolName(name) && isReadOfContinuity(ctx, command, candidatePaths)) {
+    return command;
+  }
+  if (!isReadOnlyToolName(name)) {
+    return null;
+  }
+  const evidence = collectPathLikeValues(input).join("\n");
+  return mentionedReadPaths(ctx, candidatePaths, evidence).length > 0 ? evidence : null;
 }
 
 function handlePreToolUse(ctx, payload) {
@@ -718,11 +798,7 @@ function handlePreToolUse(ctx, payload) {
     safeUnlink(ctx.restore_sentinel);
     return;
   }
-  const name = toolName(payload);
-  const input = toolInput(payload);
-  const command = commandFromToolInput(input);
-  const canBeShellRead = name === "Bash" || name === "exec_command" || name === "functions.exec_command" || name === "";
-  if (canBeShellRead && isReadOfContinuity(ctx, command, missingReads)) {
+  if (restoreReadEvidence(ctx, payload, missingReads)) {
     return;
   }
   const requiredReads = missingReads.map((value) => `\`${value}\``).join(", ");
@@ -749,12 +825,12 @@ function handlePostToolUse(ctx, payload) {
   if (!readRestoreSentinel(ctx)) {
     return;
   }
-  const command = commandFromToolInput(toolInput(payload));
   if (!toolSucceeded(payload)) {
     return;
   }
-  if (isReadOfContinuity(ctx, command)) {
-    updateRestoreProgress(ctx, command);
+  const evidence = restoreReadEvidence(ctx, payload);
+  if (evidence) {
+    updateRestoreProgress(ctx, evidence);
   }
 }
 

@@ -154,6 +154,41 @@ function buildProjectsConfig(options) {
   };
 }
 
+function projectEntries(config) {
+  if (Array.isArray(config)) {
+    return config;
+  }
+  if (Array.isArray(config?.projects)) {
+    return config.projects;
+  }
+  return [];
+}
+
+function mergeProjectsConfig(existingConfig, incomingConfig) {
+  if (!incomingConfig) {
+    return existingConfig;
+  }
+  const existing = projectEntries(existingConfig);
+  const incoming = projectEntries(incomingConfig);
+  const incomingByName = new Map(incoming.map((project) => [String(project.name), project]));
+  const replaced = new Set();
+  const projects = existing.map((project) => {
+    const name = String(project?.name || "");
+    if (incomingByName.has(name)) {
+      replaced.add(name);
+      return incomingByName.get(name);
+    }
+    return project;
+  });
+  for (const project of incoming) {
+    const name = String(project.name);
+    if (!replaced.has(name)) {
+      projects.push(project);
+    }
+  }
+  return { projects };
+}
+
 function install(options) {
   if (options.help) {
     console.log(usage());
@@ -163,6 +198,8 @@ function install(options) {
   const command = `${shellQuote(options.nodePath)} ${shellQuote(path.join(targetDir, "compact-continuity.mjs"))}`;
   const projectsConfig = buildProjectsConfig(options);
   const projectsPath = path.join(targetDir, "projects.json");
+  const existingProjectsConfig = readJson(projectsPath, { projects: [] });
+  const mergedProjectsConfig = projectsConfig ? mergeProjectsConfig(existingProjectsConfig, projectsConfig) : null;
   const hooksConfig = readJson(hooksPath, { hooks: {} });
 
   const changedHooks = [
@@ -177,7 +214,7 @@ function install(options) {
       target_dir: targetDir,
       hooks_path: hooksPath,
       command,
-      projects_config: projectsConfig || "preserve existing or copy example",
+      projects_config: mergedProjectsConfig || "preserve existing or copy example",
       hooks_changed: changedHooks,
     }, null, 2));
     return;
@@ -190,9 +227,9 @@ function install(options) {
   copyFile("projects.example.json", 0o644);
 
   let projectsConfigMode = "preserved";
-  if (projectsConfig) {
-    writeJson(projectsPath, projectsConfig);
-    projectsConfigMode = "written from --project";
+  if (mergedProjectsConfig) {
+    writeJson(projectsPath, mergedProjectsConfig);
+    projectsConfigMode = "merged from --project";
   } else if (!fs.existsSync(projectsPath)) {
     fs.copyFileSync(path.join(repoRoot, "projects.example.json"), projectsPath);
     projectsConfigMode = "created from example";

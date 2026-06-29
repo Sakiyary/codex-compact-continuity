@@ -181,6 +181,7 @@ assert.match(judgLatestMarkdown, /Previous compact preserved database decision/)
 assert.match(judgLatestMarkdown, /Cumulative History Rollup/);
 assert.match(judgLatestMarkdown, /必须先读 handoff/);
 assert.match(judgLatestMarkdown, /git -C example-docs diff --check/);
+assert.equal(fs.readFileSync(path.join(judgRoot, continuityDirName, ".gitignore"), "utf8"), "*\n!.gitignore\n");
 
 const judgLatestJson = readJson(path.join(judgRoot, continuityDirName, "latest.json"));
 assert.equal(judgLatestJson.project, "ExampleMonorepo");
@@ -252,6 +253,17 @@ assert.equal(blockedPayload.decision, "block");
 assert.match(blockedPayload.systemMessage, /ExampleMonorepo compact continuity restore/);
 assert.match(blockedPayload.systemMessage, /\.codex-compact-continuity\/latest\.md/);
 
+const misleadingRead = runHook(judgRoot, codexHome, projectsFile, {
+  hook_event_name: "PreToolUse",
+  cwd: judgRoot,
+  tool_name: "Bash",
+  tool_input: {
+    cmd: `cat ${continuityDirName}/latest.md.bak`,
+  },
+});
+assert.equal(misleadingRead.status, 0, misleadingRead.stderr);
+assert.equal(JSON.parse(misleadingRead.stdout).decision, "block");
+
 const readLatestMd = runHook(judgRoot, codexHome, projectsFile, {
   hook_event_name: "PostToolUse",
   cwd: judgRoot,
@@ -274,6 +286,31 @@ assert.deepEqual(readJson(sentinelPath).missing_reads.sort(), [
   "example-docs/implementation/capability-roadmap.md",
   "example-docs/implementation/progress.md",
 ].sort());
+
+const nativeReadLatestJson = runHook(judgRoot, codexHome, projectsFile, {
+  hook_event_name: "PreToolUse",
+  cwd: judgRoot,
+  tool_name: "mcp__filesystem__read_file",
+  tool_input: {
+    path: `${continuityDirName}/latest.json`,
+  },
+});
+assert.equal(nativeReadLatestJson.status, 0, nativeReadLatestJson.stderr);
+assert.deepEqual(JSON.parse(nativeReadLatestJson.stdout), {});
+
+const nativeReadLatestJsonAck = runHook(judgRoot, codexHome, projectsFile, {
+  hook_event_name: "PostToolUse",
+  cwd: judgRoot,
+  tool_name: "mcp__filesystem__read_file",
+  tool_input: {
+    path: `${continuityDirName}/latest.json`,
+  },
+  tool_response: {
+    exit_code: 0,
+  },
+});
+assert.equal(nativeReadLatestJsonAck.status, 0, nativeReadLatestJsonAck.stderr);
+assert.ok(!readJson(sentinelPath).missing_reads.includes(`${continuityDirName}/latest.json`));
 
 const blockedAfterPartialRead = runHook(judgRoot, codexHome, projectsFile, {
   hook_event_name: "PreToolUse",

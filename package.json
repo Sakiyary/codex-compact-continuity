@@ -7,8 +7,8 @@
     "codex-compact-continuity-install": "./scripts/install.mjs"
   },
   "scripts": {
-    "check": "node --check src/compact-continuity.mjs && node --check test/compact-continuity.test.mjs && node --check scripts/install.mjs",
-    "test": "node test/compact-continuity.test.mjs",
+    "check": "node --check src/compact-continuity.mjs && node --check test/compact-continuity.test.mjs && node --check test/install.test.mjs && node --check scripts/install.mjs",
+    "test": "node test/compact-continuity.test.mjs && node test/install.test.mjs",
     "verify": "npm run check && npm test"
   },
   "keywords": [

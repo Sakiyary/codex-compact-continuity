@@ -14,7 +14,17 @@ files.
 
 1. Identify the user's project root as an absolute path.
 2. Choose a short project name.
-3. From this repository, run:
+3. Add the generated continuity directory to the target project's `.gitignore`
+   unless the user explicitly wants to version local compact handoff state:
+
+```gitignore
+.codex-compact-continuity/
+```
+
+If the user configured a custom `continuity_path`, ignore that directory
+instead.
+
+4. From this repository, run:
 
 ```bash
 node scripts/install.mjs --project ProjectName=/absolute/path/to/project
@@ -26,13 +36,13 @@ If a child directory should be ignored, add:
 --ignore ProjectName=child-dir
 ```
 
-4. Verify:
+5. Verify:
 
 ```bash
 npm run verify
 ```
 
-5. Simulate a compact for the configured project:
+6. Simulate a compact for the configured project:
 
 ```bash
 printf '{"hook_event_name":"PreCompact","trigger":"auto","cwd":"/absolute/path/to/project"}' \
@@ -45,7 +55,7 @@ Expected files:
 - `<project>/.codex-compact-continuity/latest.json`
 - `<project>/.codex-compact-continuity/history_rollup.md`
 
-6. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
+7. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
    Codex, and trust the new hook definition.
 
 ## Cleanup
@@ -57,7 +67,9 @@ If the user asks to remove this tool:
 3. Remove `<project>/.codex-compact-continuity`, or the configured
    `continuity_path`, for each configured project after checking that the user
    does not keep unrelated local files there.
-4. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
+4. Remove the generated directory entry from each target project's `.gitignore`
+   if it was added only for this tool.
+5. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
    Codex, and confirm the removed hook definition is no longer trusted or
    listed.
 
