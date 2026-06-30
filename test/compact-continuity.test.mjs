@@ -83,6 +83,7 @@ writeJson(path.join(judgRoot, ".external-state", "current.json"), {
     non_goals_until_next_checkpoint: [
       "do not select a single DTO, helper, telemetry metric, smoke assertion, flag flip or port note",
     ],
+    verification_commands: ["git -C example-docs diff --check"],
   },
   current_slice: {
     title: "Post-real-autoscaler lifecycle next checkpoint selection tranche",
@@ -179,6 +180,8 @@ assert.match(judgLatestMarkdown, /Project: ExampleMonorepo/);
 assert.match(judgLatestMarkdown, /example\.runner_kafka_sandbox/);
 assert.match(judgLatestMarkdown, /Previous compact preserved database decision/);
 assert.match(judgLatestMarkdown, /Cumulative History Rollup/);
+assert.match(judgLatestMarkdown, /Continuity Evidence, Not Authority/);
+assert.match(judgLatestMarkdown, /Handoff digest: sha256:/);
 assert.match(judgLatestMarkdown, /必须先读 handoff/);
 assert.match(judgLatestMarkdown, /git -C example-docs diff --check/);
 assert.equal(fs.readFileSync(path.join(judgRoot, continuityDirName, ".gitignore"), "utf8"), "*\n!.gitignore\n");
@@ -189,8 +192,28 @@ assert.equal(judgLatestJson.compact.trigger, "auto");
 assert.equal(judgLatestJson.state.active_checkpoint_id, "example.runner_kafka_sandbox.next_checkpoint_selection_after_real_autoscaler_runner_lifecycle_mvp_module_v1");
 assert.ok(judgLatestJson.session.recent_events.length >= 2);
 assert.ok(judgLatestJson.history_rollup.entries.length >= 2);
-assert.ok(judgLatestJson.required_read_paths.includes(`${continuityDirName}/history_rollup.md`));
-assert.ok(judgLatestJson.required_read_paths.includes("example-docs/implementation/progress.md"));
+assert.deepEqual(judgLatestJson.required_read_paths, [`${continuityDirName}/latest.md`]);
+assert.ok(judgLatestJson.suggested_read_paths.includes(`${continuityDirName}/latest.json`));
+assert.ok(judgLatestJson.suggested_read_paths.includes(`${continuityDirName}/history_rollup.md`));
+assert.ok(judgLatestJson.suggested_read_paths.includes("example-docs/implementation/progress.md"));
+assert.equal(judgLatestJson.handoff_envelope.schema_version, 1);
+assert.equal(judgLatestJson.handoff_envelope.source.project, "ExampleMonorepo");
+assert.equal(judgLatestJson.handoff_envelope.reason, "auto compact continuity handoff");
+assert.match(judgLatestJson.handoff_envelope.digest, /^sha256:[a-f0-9]{64}$/);
+assert.equal(judgLatestJson.handoff_digest, judgLatestJson.handoff_envelope.digest);
+assert.deepEqual(judgLatestJson.handoff_envelope.restore_required_files, judgLatestJson.required_read_paths);
+assert.ok(judgLatestJson.handoff_envelope.suggested_read_files.includes("example-docs/implementation/progress.md"));
+assert.deepEqual(judgLatestJson.pending_verification.targets, ["git -C example-docs diff --check"]);
+assert.ok(judgLatestJson.handoff_envelope.operational_tail.length >= 2);
+assert.ok(judgLatestJson.referenced_files.some((file) =>
+  file.path === "example-docs/implementation/progress.md" &&
+  file.exists === true &&
+  /^([a-f0-9]{64})$/.test(file.sha256),
+));
+assert.ok(judgLatestJson.referenced_files.some((file) =>
+  file.path === `${continuityDirName}/latest.md` &&
+  file.role === "generated_continuity_file",
+));
 assert.equal(fs.existsSync(path.join(judgRoot, ".external-state", "continuity", "latest.md")), false);
 
 const rollupMarkdown = fs.readFileSync(path.join(judgRoot, continuityDirName, "history_rollup.md"), "utf8");
@@ -207,6 +230,7 @@ const growxLatestMarkdown = fs.readFileSync(path.join(growxRoot, continuityDirNa
 assert.match(growxLatestMarkdown, /Project: DocsProject/);
 assert.match(growxLatestMarkdown, /Docs project should restore latest project context after compact/);
 assert.equal(readJson(path.join(growxRoot, continuityDirName, "latest.json")).project, "DocsProject");
+assert.equal(readJson(path.join(growxRoot, continuityDirName, "latest.json")).pending_verification.source, "default");
 
 const ignoredFrontend = runHook(frontendRoot, codexHome, projectsFile, {
   hook_event_name: "PreCompact",
@@ -233,11 +257,7 @@ assert.equal(postCompact.status, 0, postCompact.stderr);
 const sentinelPath = path.join(judgRoot, continuityDirName, "needs-restore.json");
 const armedSentinel = readJson(sentinelPath);
 assert.equal(armedSentinel.restored, false);
-assert.ok(armedSentinel.required_first_reads.includes(`${continuityDirName}/latest.md`));
-assert.ok(armedSentinel.required_first_reads.includes(`${continuityDirName}/latest.json`));
-assert.ok(armedSentinel.required_first_reads.includes(`${continuityDirName}/history_rollup.md`));
-assert.ok(armedSentinel.required_first_reads.includes(".external-state/current.json"));
-assert.ok(armedSentinel.required_first_reads.includes("example-docs/implementation/progress.md"));
+assert.deepEqual(armedSentinel.required_first_reads, [`${continuityDirName}/latest.md`]);
 
 const blockedTool = runHook(judgRoot, codexHome, projectsFile, {
   hook_event_name: "PreToolUse",
@@ -276,63 +296,37 @@ const readLatestMd = runHook(judgRoot, codexHome, projectsFile, {
   },
 });
 assert.equal(readLatestMd.status, 0, readLatestMd.stderr);
-assert.equal(fs.existsSync(sentinelPath), true, "reading only latest.md must not clear restore sentinel");
-assert.deepEqual(readJson(sentinelPath).missing_reads.sort(), [
-  `${continuityDirName}/history_rollup.md`,
-  `${continuityDirName}/latest.json`,
-  ".external-state/current.json",
-  ".external-state/audit/current.md",
-  ".external-state/context/current.json",
-  "example-docs/implementation/capability-roadmap.md",
-  "example-docs/implementation/progress.md",
-].sort());
+assert.equal(fs.existsSync(sentinelPath), false, "reading latest.md should clear the minimal restore sentinel");
 
-const nativeReadLatestJson = runHook(judgRoot, codexHome, projectsFile, {
+const postCompactForNativeRead = runHook(judgRoot, codexHome, projectsFile, {
+  hook_event_name: "PostCompact",
+  trigger: "auto",
+  cwd: judgRoot,
+});
+assert.equal(postCompactForNativeRead.status, 0, postCompactForNativeRead.stderr);
+assert.equal(fs.existsSync(sentinelPath), true, "second compact should re-arm restore sentinel");
+
+const nativeReadLatestMd = runHook(judgRoot, codexHome, projectsFile, {
   hook_event_name: "PreToolUse",
   cwd: judgRoot,
   tool_name: "mcp__filesystem__read_file",
   tool_input: {
-    path: `${continuityDirName}/latest.json`,
+    path: `${continuityDirName}/latest.md`,
   },
 });
-assert.equal(nativeReadLatestJson.status, 0, nativeReadLatestJson.stderr);
-assert.deepEqual(JSON.parse(nativeReadLatestJson.stdout), {});
+assert.equal(nativeReadLatestMd.status, 0, nativeReadLatestMd.stderr);
+assert.deepEqual(JSON.parse(nativeReadLatestMd.stdout), {});
 
-const nativeReadLatestJsonAck = runHook(judgRoot, codexHome, projectsFile, {
+const nativeReadLatestMdAck = runHook(judgRoot, codexHome, projectsFile, {
   hook_event_name: "PostToolUse",
   cwd: judgRoot,
   tool_name: "mcp__filesystem__read_file",
   tool_input: {
-    path: `${continuityDirName}/latest.json`,
+    path: `${continuityDirName}/latest.md`,
   },
   tool_response: {
     exit_code: 0,
   },
 });
-assert.equal(nativeReadLatestJsonAck.status, 0, nativeReadLatestJsonAck.stderr);
-assert.ok(!readJson(sentinelPath).missing_reads.includes(`${continuityDirName}/latest.json`));
-
-const blockedAfterPartialRead = runHook(judgRoot, codexHome, projectsFile, {
-  hook_event_name: "PreToolUse",
-  cwd: judgRoot,
-  tool_name: "Bash",
-  tool_input: {
-    cmd: "go test ./...",
-  },
-});
-assert.equal(blockedAfterPartialRead.status, 0, blockedAfterPartialRead.stderr);
-assert.equal(JSON.parse(blockedAfterPartialRead.stdout).decision, "block");
-
-const readRemaining = runHook(judgRoot, codexHome, projectsFile, {
-  hook_event_name: "PostToolUse",
-  cwd: judgRoot,
-  tool_name: "Bash",
-  tool_input: {
-    cmd: `cat ${continuityDirName}/latest.json ${continuityDirName}/history_rollup.md .external-state/current.json .external-state/audit/current.md .external-state/context/current.json example-docs/implementation/progress.md example-docs/implementation/capability-roadmap.md`,
-  },
-  tool_response: {
-    exit_code: 0,
-  },
-});
-assert.equal(readRemaining.status, 0, readRemaining.stderr);
-assert.equal(fs.existsSync(sentinelPath), false, "all required reads should clear restore sentinel");
+assert.equal(nativeReadLatestMdAck.status, 0, nativeReadLatestMdAck.stderr);
+assert.equal(fs.existsSync(sentinelPath), false, "native read_file of latest.md should clear restore sentinel");

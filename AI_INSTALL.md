@@ -7,8 +7,8 @@ Compact Continuity.
 
 Install a global Codex hook that only activates inside the user's configured
 project roots. The hook preserves compact handoff state and blocks normal tool
-use after compaction until the restored agent reads the required continuity
-files.
+use after compaction until the restored agent reads the minimal continuity
+handoff.
 
 ## Steps
 
@@ -60,8 +60,26 @@ Expected files:
 - `<project>/.codex-compact-continuity/latest.json`
 - `<project>/.codex-compact-continuity/history_rollup.md`
 
+The generated `latest.json` should include a `handoff_envelope` with schema
+version, source project/session, creation reason, recent operational tail,
+referenced files, pending verification target, restore-required file list,
+suggested read list, and a digest.
+
+The restore-required list should stay small. Full state files, history rollups,
+and project docs may appear as suggested reads, but they should not be required
+just to clear the restore gate.
+
 8. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
    Codex, and trust the new hook definition.
+
+## Boundary To Explain
+
+Tell the user this tool creates continuity evidence and a restore gate. It does
+not create authoritative execution history.
+
+If the resumed agent needs to claim that a patch was applied, a command passed,
+or a file changed, it should verify that claim against durable sources such as
+git state, file contents, tool logs, or fresh command output.
 
 ## Cleanup
 

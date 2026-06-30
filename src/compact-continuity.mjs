@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,8 @@ const HOOK_DIR = path.resolve(new URL(import.meta.url).pathname, "..");
 const DEFAULT_PROJECTS = [];
 const CODEX_HOME = path.resolve(process.env.COMPACT_CONTINUITY_CODEX_HOME || path.join(os.homedir(), ".codex"));
 const MAX_HISTORY_ROLLUP_ENTRIES = 8;
+const MAX_RENDER_HISTORY_ENTRIES = 3;
+const MAX_RENDER_RECENT_EVENTS = 8;
 const DEFAULT_CONTINUITY_PATH = ".codex-compact-continuity";
 
 function nowIso() {
@@ -65,6 +68,28 @@ function writeTextAtomic(filePath, value) {
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
   fs.writeFileSync(tmpPath, value, "utf8");
   fs.renameSync(tmpPath, filePath);
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) {
+    return value.map(stableJson);
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableJson(value[key])]));
+}
+
+function sha256Text(value) {
+  return crypto.createHash("sha256").update(String(value)).digest("hex");
+}
+
+function sha256File(filePath) {
+  try {
+    return crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+  } catch {
+    return null;
+  }
 }
 
 function ensureContinuityGitignore(ctx) {
@@ -403,9 +428,13 @@ function existingProjectPath(ctx, relativePath) {
 }
 
 function requiredReadPaths(ctx, snapshot) {
+  return [relativeProjectPath(ctx, ctx.latest_md)];
+}
+
+function suggestedReadPaths(ctx, snapshot) {
   const state = snapshot.state || {};
-  const required = [
-    relativeProjectPath(ctx, ctx.latest_md),
+  const required = new Set(requiredReadPaths(ctx, snapshot));
+  const suggested = [
     relativeProjectPath(ctx, ctx.latest_json),
     relativeIfExists(ctx, ctx.history_rollup_md),
     state.source_path,
@@ -413,7 +442,90 @@ function requiredReadPaths(ctx, snapshot) {
     existingProjectPath(ctx, state.context_snapshot_path),
     ...(Array.isArray(state.active_docs) ? state.active_docs.map((doc) => existingProjectPath(ctx, doc)) : []),
   ].filter(Boolean);
-  return [...new Set(required)];
+  return [...new Set(suggested)].filter((suggestedPath) => !required.has(suggestedPath));
+}
+
+function pendingVerification(snapshot) {
+  const commands = Array.isArray(snapshot.state?.required_verification) ? snapshot.state.required_verification : [];
+  if (commands.length > 0) {
+    return {
+      source: "project_state",
+      targets: commands,
+      note: "Verify these targets before claiming the resumed work is complete.",
+    };
+  }
+  return {
+    source: "default",
+    targets: ["Inspect current git state and relevant files before claiming applied changes or completed work."],
+    note: "No explicit verification command was present in project state.",
+  };
+}
+
+function referencedFiles(ctx, relativePaths) {
+  return [...new Set(relativePaths || [])].map((relativePath) => {
+    const absolutePath = absoluteProjectPath(ctx, relativePath);
+    const isGeneratedHandoff =
+      absolutePath === ctx.latest_md ||
+      absolutePath === ctx.latest_json ||
+      absolutePath === ctx.history_rollup_md ||
+      absolutePath === ctx.history_rollup_json;
+    if (isGeneratedHandoff) {
+      return {
+        path: relativePath,
+        exists: fs.existsSync(absolutePath),
+        role: "generated_continuity_file",
+      };
+    }
+    let stat = null;
+    try {
+      stat = fs.statSync(absolutePath);
+    } catch {
+      return {
+        path: relativePath,
+        exists: false,
+      };
+    }
+    return {
+      path: relativePath,
+      exists: true,
+      size_bytes: stat.size,
+      mtime: stat.mtime.toISOString(),
+      sha256: sha256File(absolutePath),
+    };
+  });
+}
+
+function handoffReason(snapshot) {
+  const trigger = snapshot.compact?.trigger || "unknown";
+  return `${trigger} compact continuity handoff`;
+}
+
+function buildHandoffEnvelope(ctx, snapshot) {
+  const referencedPaths = [...new Set([
+    ...(snapshot.required_read_paths || []),
+    ...(snapshot.suggested_read_paths || []),
+  ])];
+  const envelope = {
+    schema_version: 1,
+    source: {
+      project: snapshot.project,
+      project_root: snapshot.project_root,
+      session_id: snapshot.session?.session_id || null,
+      session_path: snapshot.session?.session_path || null,
+    },
+    created_at: snapshot.created_at,
+    reason: handoffReason(snapshot),
+    compact_event: snapshot.compact?.event || null,
+    operational_tail: snapshot.session?.recent_events || [],
+    referenced_files: referencedFiles(ctx, referencedPaths),
+    pending_verification: pendingVerification(snapshot),
+    restore_required_files: snapshot.required_read_paths || [],
+    suggested_read_files: snapshot.suggested_read_paths || [],
+  };
+  return {
+    ...envelope,
+    digest: `sha256:${sha256Text(JSON.stringify(stableJson(envelope)))}`,
+  };
 }
 
 function factLines(values, maxItems) {
@@ -514,7 +626,7 @@ function buildSnapshot(ctx, payload) {
     },
     restore_protocol: [
       `Read ${latestMdPath} before doing any write, test, git, service, or destructive action after compact.`,
-      "Read project state, audit, context, and active docs named in latest.md when present.",
+      "Read suggested state, audit, context, and active docs only when they are relevant to the next action.",
       "Continue from the active cursor captured here; do not restart discovery from old transcript memory.",
       "Respect non-goals and user corrections captured in recent session signals.",
     ],
@@ -530,16 +642,19 @@ function markdownList(values, fallback = "- none") {
 
 function renderHandoff(snapshot) {
   const state = snapshot.state;
-  const recent = snapshot.session.recent_events.map((event) => {
+  const recent = snapshot.session.recent_events.slice(-MAX_RENDER_RECENT_EVENTS).map((event) => {
     const time = event.timestamp ? `${event.timestamp} ` : "";
     return `${time}${event.payload_type}: ${event.summary}`;
   });
   const repos = snapshot.git.repos.map((repo) => `${repo.repo}: ${repo.ok ? repo.status || "clean" : `status unavailable: ${repo.status}`}`);
-  const history = (snapshot.history_rollup?.entries || []).map((entry) => {
+  const history = (snapshot.history_rollup?.entries || []).slice(-MAX_RENDER_HISTORY_ENTRIES).map((entry) => {
     const facts = (entry.facts || []).map((fact) => `  - ${fact}`).join("\n");
     return `- ${entry.created_at || "unknown"} ${entry.title || entry.checkpoint || "unknown"}\n${facts}`;
   });
   const requiredFiles = snapshot.required_read_paths || [];
+  const suggestedFiles = snapshot.suggested_read_paths || [];
+  const envelope = snapshot.handoff_envelope || {};
+  const pendingTargets = envelope.pending_verification?.targets || state.required_verification || [];
 
   return `# Compact Continuity Handoff
 
@@ -548,10 +663,22 @@ Project: ${snapshot.project}
 Project root: ${snapshot.project_root}
 Compact trigger: ${snapshot.compact.trigger}
 Working directory: ${snapshot.compact.cwd}
+Handoff digest: ${envelope.digest || "unknown"}
+
+## Continuity Evidence, Not Authority
+
+This handoff is a restore aid. Treat it as evidence for where to resume, not as proof that an action happened. Verify claims such as applied patches, completed commands, and passing tests against durable sources like git state, file contents, tool logs, or test output.
 
 ## Restore Protocol
 
 ${markdownList(snapshot.restore_protocol)}
+
+## Handoff Envelope
+
+- Schema: ${envelope.schema_version || "unknown"}
+- Reason: ${envelope.reason || "unknown"}
+- Source session: ${envelope.source?.session_id || "unknown"}
+- Restore required files: ${(envelope.restore_required_files || []).length}
 
 ## Cumulative History Rollup
 
@@ -570,6 +697,12 @@ ${markdownList(history)}
 
 ${markdownList(requiredFiles)}
 
+## Suggested Reads On Demand
+
+These files may be useful, but they are not required to clear the restore gate. Read them only before acting on the related area.
+
+${markdownList(suggestedFiles)}
+
 ## Non-goals / Guardrails
 
 ${markdownList(state.non_goals_until_next_checkpoint)}
@@ -577,6 +710,10 @@ ${markdownList(state.non_goals_until_next_checkpoint)}
 ## Required Verification Mentioned By State
 
 ${markdownList(state.required_verification)}
+
+## Pending Verification Target
+
+${markdownList(pendingTargets)}
 
 ## Recent Session Signals
 
@@ -594,6 +731,11 @@ function handlePreCompact(ctx, payload) {
   const historyRollup = updateHistoryRollup(ctx, snapshot);
   snapshot.history_rollup = historyRollup;
   snapshot.required_read_paths = requiredReadPaths(ctx, snapshot);
+  snapshot.suggested_read_paths = suggestedReadPaths(ctx, snapshot);
+  snapshot.handoff_envelope = buildHandoffEnvelope(ctx, snapshot);
+  snapshot.pending_verification = snapshot.handoff_envelope.pending_verification;
+  snapshot.referenced_files = snapshot.handoff_envelope.referenced_files;
+  snapshot.handoff_digest = snapshot.handoff_envelope.digest;
   const compactId = snapshot.created_at.replace(/[-:.]/g, "").replace("T", "-").replace("Z", "Z");
   const snapshotPath = path.join(ctx.snapshots_dir, `${compactId}.json`);
   writeJsonAtomic(snapshotPath, snapshot);

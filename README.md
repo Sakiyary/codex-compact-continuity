@@ -5,8 +5,8 @@ state across Codex context compaction.
 
 It is for long-running coding sessions where the compacted summary can lose
 details that still matter: current task cursor, recent user corrections, dirty
-repo state, active docs, verification requirements, and the exact files the next
-model must reread before continuing.
+repo state, active docs, verification requirements, and the small handoff file
+the next model must reread before continuing.
 
 ## Why This Exists
 
@@ -24,6 +24,10 @@ handoff restore before normal tool use continues.
   - `<project>/.codex-compact-continuity/latest.md`
   - `<project>/.codex-compact-continuity/latest.json`
   - `<project>/.codex-compact-continuity/snapshots/*.json`
+- The JSON handoff includes a small inspectable envelope with schema version,
+  source project/session, creation reason, recent operational tail, referenced
+  files, pending verification target, restore-required file list, suggested
+  read list, and a digest of the envelope.
 - `PreCompact` also updates cumulative history:
   - `<project>/.codex-compact-continuity/history_rollup.md`
   - `<project>/.codex-compact-continuity/history_rollup.json`
@@ -31,10 +35,24 @@ handoff restore before normal tool use continues.
   - `<project>/.codex-compact-continuity/needs-restore.json`
 - `PreToolUse` blocks non-restore tool calls while the sentinel is armed.
 - `PostToolUse` records which required files have been read and clears the
-  sentinel only after all required reads are observed.
+  sentinel only after the minimal restore read is observed.
+
+The restore gate is intentionally small. Large project docs, full state files,
+history rollups, and debug JSON are written as suggested reads, not mandatory
+reads. A resumed agent should read them only before acting on the related area.
 
 The hook is registered globally, but it no-ops unless the hook payload `cwd` is
 inside a configured project root.
+
+## Boundary
+
+This package provides a restore gate and continuity evidence. It does not make
+the handoff an authoritative execution history.
+
+When a resumed agent sees a claim like "the patch was applied", "tests passed",
+or "this file was changed", it should still verify that claim against durable
+sources such as git state, file contents, tool logs, or fresh command output.
+The handoff tells the agent what to read first; it does not prove what happened.
 
 ## Privacy And Git Safety
 
