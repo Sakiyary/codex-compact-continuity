@@ -39,6 +39,27 @@ fs.mkdirSync(alphaRoot, { recursive: true });
 fs.mkdirSync(betaRoot, { recursive: true });
 fs.mkdirSync(alphaMovedRoot, { recursive: true });
 
+const hookTargetDir = path.join(codexHome, "hooks", "compact-continuity");
+const alternateCommand = `"/previous/node" "${path.join(hookTargetDir, "compact-continuity.mjs")}"`;
+fs.mkdirSync(codexHome, { recursive: true });
+fs.writeFileSync(path.join(codexHome, "hooks.json"), `${JSON.stringify({
+  hooks: Object.fromEntries(["PreCompact", "PostCompact", "PreToolUse", "PostToolUse"].map((eventName) => [
+    eventName,
+    [
+      {
+        matcher: eventName.includes("Tool") ? ".*" : "auto|manual",
+        hooks: [
+          {
+            type: "command",
+            command: alternateCommand,
+            timeout: 5,
+          },
+        ],
+      },
+    ],
+  ])),
+}, null, 2)}\n`, "utf8");
+
 const firstInstall = runInstall(codexHome, [
   "--project", `Alpha=${alphaRoot}`,
   "--ignore", "Alpha=frontend",

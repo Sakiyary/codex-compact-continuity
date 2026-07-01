@@ -114,6 +114,30 @@ function eventHasCommand(eventEntries, expectedCommand) {
   );
 }
 
+function removeCommandHooksForScript(hooksConfig, scriptPath) {
+  hooksConfig.hooks ||= {};
+  let changed = false;
+  for (const [eventName, eventEntries] of Object.entries(hooksConfig.hooks)) {
+    if (!Array.isArray(eventEntries)) {
+      continue;
+    }
+    hooksConfig.hooks[eventName] = eventEntries
+      .map((group) => {
+        const hooks = Array.isArray(group?.hooks) ? group.hooks : [];
+        const filteredHooks = hooks.filter((hook) => !(hook.type === "command" && String(hook.command || "").includes(scriptPath)));
+        if (filteredHooks.length !== hooks.length) {
+          changed = true;
+        }
+        return {
+          ...group,
+          hooks: filteredHooks,
+        };
+      })
+      .filter((group) => (group.hooks || []).length > 0);
+  }
+  return changed;
+}
+
 function ensureEvent(hooksConfig, command, eventName, matcher, timeout, statusMessage) {
   hooksConfig.hooks ||= {};
   hooksConfig.hooks[eventName] ||= [];
@@ -195,19 +219,21 @@ function install(options) {
     return;
   }
 
-  const command = `${shellQuote(options.nodePath)} ${shellQuote(path.join(targetDir, "compact-continuity.mjs"))}`;
+  const hookScriptPath = path.join(targetDir, "compact-continuity.mjs");
+  const command = `${shellQuote(options.nodePath)} ${shellQuote(hookScriptPath)}`;
   const projectsConfig = buildProjectsConfig(options);
   const projectsPath = path.join(targetDir, "projects.json");
   const existingProjectsConfig = readJson(projectsPath, { projects: [] });
   const mergedProjectsConfig = projectsConfig ? mergeProjectsConfig(existingProjectsConfig, projectsConfig) : null;
   const hooksConfig = readJson(hooksPath, { hooks: {} });
 
+  const removedExistingCompactHooks = removeCommandHooksForScript(hooksConfig, hookScriptPath);
   const changedHooks = [
     ensureEvent(hooksConfig, command, "PreCompact", "auto|manual", 30, "Saving compact continuity handoff"),
     ensureEvent(hooksConfig, command, "PostCompact", "auto|manual", 10, "Arming compact continuity restore gate"),
     ensureEvent(hooksConfig, command, "PreToolUse", ".*", 5, "Checking compact continuity restore gate"),
     ensureEvent(hooksConfig, command, "PostToolUse", ".*", 5, "Clearing compact continuity restore gate"),
-  ].some(Boolean);
+  ].some(Boolean) || removedExistingCompactHooks;
 
   if (options.dryRun) {
     console.log(JSON.stringify({
