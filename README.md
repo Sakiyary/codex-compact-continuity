@@ -20,19 +20,30 @@ handoff restore before normal tool use continues.
 
 ## How It Works
 
+For hook payloads with a `session_id`, the continuity directory is
+`<project>/.codex-compact-continuity/sessions/<session-key>/`. Lowercase UUIDs
+use their ID as the key; other identifiers use an `s-` prefix and SHA-256 hash
+to avoid path traversal, case collisions, and Windows reserved filenames.
+The paths below use `<continuity-dir>` for this directory.
+
+Payloads without a session ID retain the legacy
+`<project>/.codex-compact-continuity/` directory. Existing root-level history
+is left intact and is not inherited by identified sessions. A read in one
+session cannot acknowledge another session's restore gate.
+
 - `PreCompact` writes a bounded handoff snapshot:
-  - `<project>/.codex-compact-continuity/latest.md`
-  - `<project>/.codex-compact-continuity/latest.json`
-  - `<project>/.codex-compact-continuity/snapshots/*.json`
+  - `<continuity-dir>/latest.md`
+  - `<continuity-dir>/latest.json`
+  - `<continuity-dir>/snapshots/*.json`
 - The JSON handoff includes a small inspectable envelope with schema version,
   source project/session, creation reason, recent operational tail, referenced
   files, pending verification target, restore-required file list, suggested
   read list, and a digest of the envelope.
 - `PreCompact` also updates cumulative history:
-  - `<project>/.codex-compact-continuity/history_rollup.md`
-  - `<project>/.codex-compact-continuity/history_rollup.json`
+  - `<continuity-dir>/history_rollup.md`
+  - `<continuity-dir>/history_rollup.json`
 - `PostCompact` arms a restore sentinel:
-  - `<project>/.codex-compact-continuity/needs-restore.json`
+  - `<continuity-dir>/needs-restore.json`
 - `PreToolUse` blocks non-restore tool calls while the sentinel is armed.
 - `PostToolUse` records which required files have been read and clears the
   sentinel only after the minimal restore read is observed.
@@ -43,6 +54,62 @@ reads. A resumed agent should read them only before acting on the related area.
 
 The hook is registered globally, but it no-ops unless the hook payload `cwd` is
 inside a configured project root.
+
+## Structured Briefs
+
+`PostToolUse` reminds the assistant to maintain a structured brief after
+meaningful milestones or changes in user direction. Reminders are emitted
+once per `turn_id`, or once per session when a turn ID is unavailable.
+The assistant writes the semantic content; the hook does not call an external
+model or infer that work succeeded. Reminder delivery does not guarantee that
+the assistant has updated every milestone.
+
+Write a brief using the installed script:
+
+```bash
+node ~/.codex/hooks/compact-continuity/compact-continuity.mjs --write-brief --file input.json
+```
+
+PowerShell, with Node on `PATH`:
+
+```powershell
+& node "$HOME/.codex/hooks/compact-continuity/compact-continuity.mjs" --write-brief --file input.json
+```
+
+Example input (use the actual configured root and current session ID):
+
+```json
+{
+  "cwd": "/absolute/path/to/my-project",
+  "session_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+  "brief": {
+    "goal": "Fix the parser",
+    "work_in_progress": "Checking malformed input",
+    "completed": [{"summary": "Added validation", "evidence": "Parser diff and validation test output"}],
+    "pending": ["Run integration tests"],
+    "decisions": ["Reject invalid input before writing"],
+    "dead_ends": ["Silently coercing invalid values hides errors"],
+    "assumptions": [{"claim": "Callers handle validation errors", "verify_with": "Integration tests"}],
+    "constraints": ["Keep the public API unchanged"],
+    "next_step": "Run integration tests",
+    "last_request_status": "partially_answered"
+  }
+}
+```
+
+Lists may be empty. Request status is `answered`, `partially_answered`,
+`not_answered`, or `unknown`. The writer requires evidence for completed
+claims, validates the input, timestamps it, and binds it to the latest user
+request found in the transcript. It writes `brief.json` and `brief.md` inside
+the session directory. A pending handoff must be read before updating a brief.
+
+At compaction, the brief is embedded in `latest.md` and the JSON handoff
+envelope covered by its digest. A different or later user request marks the
+brief `stale_new_user_request` and resets request status to `unknown`.
+Missing, malformed, or foreign-session briefs fall back to `facts_only`.
+If no user request exists in the bounded final 2 MiB of the transcript,
+freshness is explicitly unverified. These records remain evidence to check,
+not authority; newer user instructions take precedence.
 
 ## Boundary
 
@@ -68,7 +135,7 @@ unless you intentionally want to version this state:
 ```
 
 As a second line of defense, the hook writes
-`<project>/.codex-compact-continuity/.gitignore` with rules that ignore the
+`<continuity-dir>/.gitignore` with rules that ignore the
 generated files inside that directory. The project-level `.gitignore` entry is
 still recommended because it hides the whole local state directory from normal
 Git status output.
@@ -122,6 +189,11 @@ node ~/.codex/hooks/compact-continuity/compact-continuity.mjs
 
 After installing or changing hooks, open Codex App -> Settings -> Hooks, or run
 `/hooks` in Codex, and trust the updated hook definition.
+
+On Windows the installer emits a PowerShell command with the `&` call operator
+and single-quoted paths. This supports spaces in executable and installation
+paths. Windows restores recognize `Get-Content -LiteralPath`; chained commands
+and failed reads do not acknowledge the restore.
 
 Also add `.codex-compact-continuity/` to the target project's `.gitignore` unless
 you have configured a different `continuity_path`.
@@ -184,6 +256,11 @@ Expected files:
 - `<project>/.codex-compact-continuity/latest.md`
 - `<project>/.codex-compact-continuity/latest.json`
 - `<project>/.codex-compact-continuity/history_rollup.md`
+
+The simulation above omits `session_id` and therefore checks legacy paths.
+With a session ID, inspect `sessions/<session-key>/` instead. A synthetic hook
+invocation is a smoke test; after trusting the hooks, use an actual `/compact`
+to verify automatic lifecycle delivery and the subsequent restore acknowledgment.
 
 ## AI-Assisted Installation
 

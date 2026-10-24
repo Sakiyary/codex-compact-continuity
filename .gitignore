@@ -3,3 +3,4 @@ node_modules/
 coverage/
 *.log
 projects.json
+.codex-compact-continuity/

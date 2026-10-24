@@ -60,6 +60,12 @@ Expected files:
 - `<project>/.codex-compact-continuity/latest.json`
 - `<project>/.codex-compact-continuity/history_rollup.md`
 
+This simulation has no `session_id` and uses legacy root-level paths. Real
+identified sessions use `.codex-compact-continuity/sessions/<session-key>/`.
+Lowercase UUIDs are used directly; other IDs use `s-` plus their SHA-256 hash.
+Do not use a different session's handoff or an old root-level file as evidence
+that the current session restored successfully.
+
 The generated `latest.json` should include a `handoff_envelope` with schema
 version, source project/session, creation reason, recent operational tail,
 referenced files, pending verification target, restore-required file list,
@@ -71,6 +77,19 @@ just to clear the restore gate.
 
 8. Ask the user to open Codex App -> Settings -> Hooks, or run `/hooks` in
    Codex, and trust the new hook definition.
+
+9. Maintain the structured brief using the `--write-brief` command and schema
+   in README.md. Include evidence for completed work. Never publish brief
+   inputs or generated handoffs as part of a code contribution.
+
+10. Verify a real `/compact` after approval. Read the current session's
+    `latest.md`, check the new snapshot time and trigger, then confirm
+    `last-restore-ack.json` records the read and `needs-restore.json` is cleared.
+    Do not describe a synthetic invocation as proof of automatic delivery.
+
+On Windows the installer registers PowerShell commands beginning with `&`.
+Paths containing spaces are quoted by the installer. Use `Get-Content
+-LiteralPath` for a restore read; keep it separate from other commands.
 
 ## Boundary To Explain
 

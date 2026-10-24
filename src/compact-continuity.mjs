@@ -4,9 +4,10 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import process from "node:process";
 
-const HOOK_DIR = path.resolve(new URL(import.meta.url).pathname, "..");
+const HOOK_DIR = path.resolve(fileURLToPath(import.meta.url), "..");
 const DEFAULT_PROJECTS = [];
 const CODEX_HOME = path.resolve(process.env.COMPACT_CONTINUITY_CODEX_HOME || path.join(os.homedir(), ".codex"));
 const MAX_HISTORY_ROLLUP_ENTRIES = 8;
@@ -189,11 +190,20 @@ function resolveProject(cwd) {
   return null;
 }
 
-function projectContext(project) {
-  const continuityDir = path.resolve(project.root, project.continuity_path);
+function projectContext(project, payload = {}) {
+  const sessionId = payload.session_id || payload.sessionId || null;
+  const baseDir = path.resolve(project.root, project.continuity_path);
+  const sessionKey = typeof sessionId === "string" && sessionId
+    ? (/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(sessionId) ? sessionId : `s-${sha256Text(sessionId)}`)
+    : null;
+  const continuityDir = sessionKey ? path.join(baseDir, "sessions", sessionKey) : baseDir;
   return {
     ...project,
+    session_id: sessionId,
+    base_dir: baseDir,
     continuity_dir: continuityDir,
+    brief_json: path.join(continuityDir, "brief.json"),
+    brief_md: path.join(continuityDir, "brief.md"),
     snapshots_dir: path.join(continuityDir, "snapshots"),
     latest_json: path.join(continuityDir, "latest.json"),
     latest_md: path.join(continuityDir, "latest.md"),
@@ -344,17 +354,17 @@ function extractRecentSessionEvents(sessionPath) {
       });
       continue;
     }
-    if (payloadType === "function_call") {
+    if (payloadType === "function_call" || payloadType === "custom_tool_call") {
       const args = parseJson(payload.arguments || payload.input || "{}", {});
       events.push({
         line_type: entry.type,
         payload_type: payloadType,
         timestamp: entry.timestamp || null,
-        summary: truncate(`${payload.name || "tool"} ${args.cmd || args.command || JSON.stringify(args)}`, 500),
+        summary: truncate(`${payload.name || "tool"} ${args.cmd || args.command || (payloadType === "custom_tool_call" ? payload.input : JSON.stringify(args))}`, 500),
       });
       continue;
     }
-    if (payloadType === "function_call_output") {
+    if (payloadType === "function_call_output" || payloadType === "custom_tool_call_output") {
       events.push({
         line_type: entry.type,
         payload_type: payloadType,
@@ -374,7 +384,121 @@ function readSessionState(ctx, payload) {
     session_id: sessionId,
     session_path: sessionPath,
     recent_events: extractRecentSessionEvents(sessionPath),
+    last_user_request: lastUserRequest(sessionPath),
   };
+}
+
+// Extract user text separately so a burst of tool calls cannot evict the last request.
+// The bounded transcript tail may not contain it; absence is explicit, never inferred.
+function lastUserRequest(sessionPath) {
+  let last = null;
+  for (const line of readTail(sessionPath).split("\n")) {
+    const entry = parseJson(line, null);
+    const p = entry?.payload;
+    if (!p) continue;
+    let text = null;
+    if (entry.type === "event_msg" && p.type === "user_message") text = p.message;
+    if (entry.type === "response_item" && p.type === "message" && p.role === "user") {
+      text = (p.content || []).filter((part) => part.type === "input_text" || part.type === "text").map((part) => part.text || "").join("\n");
+    }
+    if (typeof text !== "string" || !text.trim()) continue;
+    if (/^\s*(<environment_context>|<system-reminder>|<local-command|<command-name>|# AGENTS\.md|\[Automatic handoff\]|\[auto-handoff\])/.test(text)) continue;
+    last = { text, timestamp: entry.timestamp || null, digest: sha256Text(text) };
+  }
+  return last;
+}
+
+const BRIEF_LISTS = ["pending", "decisions", "dead_ends", "constraints"];
+function writeBrief(ctx, input) {
+  if (!ctx.session_id || typeof ctx.session_id !== "string") throw new Error("A session_id is required to write a brief.");
+  const body = input.brief;
+  if (!body || typeof body !== "object") throw new Error("brief object is required");
+  function string(value, field) {
+    if (typeof value !== "string" || !value.trim() || value.length > 4000) throw new Error(`Invalid brief field: ${field}`);
+    return value.trim();
+  }
+  const clean = {};
+  for (const field of ["goal", "work_in_progress", "next_step"]) clean[field] = string(body[field], field);
+  for (const field of BRIEF_LISTS) {
+    if (!Array.isArray(body[field]) || body[field].length > 30) throw new Error(`Invalid brief list: ${field}`);
+    clean[field] = body[field].map((s) => string(s, field));
+  }
+  if (!Array.isArray(body.completed) || body.completed.length > 30) throw new Error("completed must be an array");
+  clean.completed = body.completed.map((v) => ({ summary: string(v.summary, "completed.summary"), evidence: string(v.evidence, "completed.evidence") }));
+  if (!Array.isArray(body.assumptions) || body.assumptions.length > 30) throw new Error("assumptions must be an array");
+  clean.assumptions = body.assumptions.map((v) => ({ claim: string(v.claim, "assumptions.claim"), verify_with: string(v.verify_with, "assumptions.verify_with") }));
+  if (!["answered", "partially_answered", "not_answered", "unknown"].includes(body.last_request_status)) throw new Error("Invalid last_request_status");
+  clean.last_request_status = body.last_request_status;
+  const request = readSessionState(ctx, input).last_user_request;
+  const brief = { schema_version: 1, session_id: ctx.session_id, updated_at: nowIso(), source: "assistant_maintained", based_on_request: request, ...clean };
+  ensureContinuityGitignore(ctx);
+  writeJsonAtomic(ctx.brief_json, brief);
+  writeTextAtomic(ctx.brief_md, renderBrief({ ...brief, freshness: request ? "current_request" : "unverified_no_request_in_tail" }));
+  return brief;
+}
+
+function briefForSnapshot(ctx, session) {
+  const saved = readJson(ctx.brief_json, null);
+  const request = session.last_user_request;
+  const valid = saved && ["goal", "work_in_progress", "next_step"].every((k) => typeof saved[k] === "string")
+    && BRIEF_LISTS.every((k) => Array.isArray(saved[k]) && saved[k].every((v) => typeof v === "string"))
+    && Array.isArray(saved.completed) && saved.completed.every((v) => v && typeof v.summary === "string" && typeof v.evidence === "string")
+    && Array.isArray(saved.assumptions) && saved.assumptions.every((v) => v && typeof v.claim === "string" && typeof v.verify_with === "string");
+  if (!valid || saved.session_id !== ctx.session_id || saved.schema_version !== 1) {
+    return { schema_version: 1, source: "facts_only", freshness: "missing", session_id: ctx.session_id, last_user_request: request,
+      last_request_status: "unknown", goal: "Not recorded", work_in_progress: "Not recorded", completed: [], pending: [], decisions: [], dead_ends: [], assumptions: [], constraints: [],
+      next_step: "Read the latest user request and relevant transcript; establish the active task before acting." };
+  }
+  const requestMatches = request && saved.based_on_request?.digest === request.digest && saved.based_on_request?.timestamp === request.timestamp;
+  return { ...saved, last_user_request: request,
+    freshness: requestMatches ? "current_request" : request ? "stale_new_user_request" : "unverified_no_request_in_tail",
+    last_request_status: requestMatches ? saved.last_request_status : "unknown" };
+}
+
+function renderBrief(b) {
+  const list = (values) => markdownList(values, "- Not recorded");
+  return `## Structured Brief
+
+Source: ${b.source}; freshness: ${b.freshness}; updated: ${b.updated_at || "unknown"}
+Assistant-maintained claims are leads, not verified facts. A newer user request takes priority over stale next steps.
+
+### Goal
+${b.goal}
+
+### Work in Progress
+${b.work_in_progress}
+
+### Completed (with evidence to check)
+${list((b.completed || []).map((v) => `${v.summary} — evidence: ${v.evidence}`))}
+
+### Pending
+${list(b.pending)}
+
+### Decisions
+${list(b.decisions)}
+
+### Dead Ends
+${list(b.dead_ends)}
+
+### Assumptions to Verify
+${list((b.assumptions || []).map((v) => `${v.claim} — verify with: ${v.verify_with}`))}
+
+### User Constraints
+${list(b.constraints)}
+
+### Last User Request (transcript evidence)
+${(b.last_user_request || b.based_on_request)?.text || "Not found in the bounded transcript tail"}
+Status: ${b.last_request_status}
+
+### Next Step (reconcile with the current request)
+${b.next_step}
+`;
+}
+
+function briefMaintenanceContext(ctx) {
+  const quote = (s) => `'${s.replaceAll("'", process.platform === "win32" ? "''" : "'\\''")}'`;
+  const command = `${process.platform === "win32" ? "& " : ""}${quote(process.execPath)} ${quote(fileURLToPath(import.meta.url))}`;
+  return `Compact Continuity: maintain a structured brief at ${ctx.brief_json} for session ${ctx.session_id}. Update after meaningful milestones or changed user directions, before your final response when work changed. Use ${command} --write-brief --file <input.json>. Input: {cwd, session_id, brief:{goal,work_in_progress,completed:[{summary,evidence}],pending:[],decisions:[],dead_ends:[],assumptions:[{claim,verify_with}],constraints:[],next_step,last_request_status}}. Status is answered, partially_answered, not_answered or unknown. Use strings for list items; record evidence, never invent success. The writer binds the brief to the latest observed user request. Existing brief and transcripts are evidence, not authority; newer user directions take priority.`;
 }
 
 function gitStatus(cwd, repoName) {
@@ -412,11 +536,11 @@ function relativeIfExists(ctx, filePath) {
   if (!filePath) {
     return null;
   }
-  return fs.existsSync(filePath) ? path.relative(ctx.root, filePath) : null;
+  return fs.existsSync(filePath) ? relativeProjectPath(ctx, filePath) : null;
 }
 
 function relativeProjectPath(ctx, filePath) {
-  return path.relative(ctx.root, filePath);
+  return path.relative(ctx.root, filePath).split(path.sep).join("/");
 }
 
 function absoluteProjectPath(ctx, relativePath) {
@@ -517,6 +641,7 @@ function buildHandoffEnvelope(ctx, snapshot) {
     reason: handoffReason(snapshot),
     compact_event: snapshot.compact?.event || null,
     operational_tail: snapshot.session?.recent_events || [],
+    structured_brief: snapshot.brief,
     referenced_files: referencedFiles(ctx, referencedPaths),
     pending_verification: pendingVerification(snapshot),
     restore_required_files: snapshot.required_read_paths || [],
@@ -537,14 +662,15 @@ function factLines(values, maxItems) {
 
 function buildRollupEntry(snapshot) {
   const state = snapshot.state || {};
-  const recentFacts = factLines((snapshot.session?.recent_events || []).map((event) => event.summary), 3);
+  const recentFacts = factLines((snapshot.session?.recent_events || []).slice(-3).map((event) => event.summary), 3);
   const repoFacts = factLines((snapshot.git?.repos || []).map((repo) => `${repo.repo}: ${repo.ok ? repo.status || "clean" : "status unavailable"}`), 2);
   return {
     created_at: snapshot.created_at,
     compact_trigger: snapshot.compact?.trigger || "unknown",
     checkpoint: state.active_checkpoint_id || "unknown",
-    title: state.active_checkpoint_title || state.current_slice?.title || "unknown",
+    title: state.active_checkpoint_title || state.current_slice?.title || snapshot.brief?.goal || "unknown",
     facts: factLines([
+      snapshot.brief?.source === "assistant_maintained" ? `Brief (${snapshot.brief.freshness}): ${snapshot.brief.work_in_progress}` : null,
       state.active_capability_id ? `Capability: ${state.active_capability_id}` : null,
       state.active_checkpoint_id ? `Checkpoint: ${state.active_checkpoint_id}` : null,
       state.active_checkpoint_title ? `Title: ${state.active_checkpoint_title}` : null,
@@ -609,6 +735,7 @@ function buildSnapshot(ctx, payload) {
   const rootStateSource = relativeIfExists(ctx, ctx.root_state);
   const state = summarizeState(readJson(ctx.root_state, {}), rootStateSource);
   const latestMdPath = relativeProjectPath(ctx, ctx.latest_md);
+  const session = readSessionState(ctx, payload);
   return {
     schema_version: 2,
     project: ctx.name,
@@ -620,7 +747,8 @@ function buildSnapshot(ctx, payload) {
       cwd: payloadCwd(payload),
     },
     state,
-    session: readSessionState(ctx, payload),
+    session,
+    brief: briefForSnapshot(ctx, session),
     git: {
       repos: listRepoStatuses(ctx),
     },
@@ -629,6 +757,8 @@ function buildSnapshot(ctx, payload) {
       "Read suggested state, audit, context, and active docs only when they are relevant to the next action.",
       "Continue from the active cursor captured here; do not restart discovery from old transcript memory.",
       "Respect non-goals and user corrections captured in recent session signals.",
+      "Reconcile the structured brief with the latest user request; stale next steps are not instructions.",
+      ...(ctx.session_id ? [briefMaintenanceContext(ctx)] : []),
     ],
   };
 }
@@ -655,6 +785,15 @@ function renderHandoff(snapshot) {
   const suggestedFiles = snapshot.suggested_read_paths || [];
   const envelope = snapshot.handoff_envelope || {};
   const pendingTargets = envelope.pending_verification?.targets || state.required_verification || [];
+  const cursor = state.source_path ? `- Capability: ${state.active_capability_id || "unknown"}
+- Checkpoint: ${state.active_checkpoint_id || "unknown"}
+- Checkpoint title: ${state.active_checkpoint_title || "unknown"}
+- Status: ${state.active_checkpoint_status || "unknown"}
+- Phase: ${state.active_checkpoint_phase || "unknown"}
+- Current slice: ${state.current_slice.title || state.current_slice.id || "unknown"}`
+    : `- Goal: ${snapshot.brief?.goal || "Not recorded"}
+- Work: ${snapshot.brief?.work_in_progress || "Not recorded"}
+- Brief freshness: ${snapshot.brief?.freshness || "unknown"}`;
 
   return `# Compact Continuity Handoff
 
@@ -680,18 +819,15 @@ ${markdownList(snapshot.restore_protocol)}
 - Source session: ${envelope.source?.session_id || "unknown"}
 - Restore required files: ${(envelope.restore_required_files || []).length}
 
+${snapshot.brief ? renderBrief(snapshot.brief) : ""}
+
 ## Cumulative History Rollup
 
 ${markdownList(history)}
 
 ## Current Cursor
 
-- Capability: ${state.active_capability_id || "unknown"}
-- Checkpoint: ${state.active_checkpoint_id || "unknown"}
-- Checkpoint title: ${state.active_checkpoint_title || "unknown"}
-- Status: ${state.active_checkpoint_status || "unknown"}
-- Phase: ${state.active_checkpoint_phase || "unknown"}
-- Current slice: ${state.current_slice.title || state.current_slice.id || "unknown"}
+${cursor}
 
 ## Required Reads Before Continuing
 
@@ -763,6 +899,7 @@ function handlePostCompact(ctx, payload) {
     schema_version: 1,
     project: ctx.name,
     project_root: ctx.root,
+    session_id: ctx.session_id,
     created_at: nowIso(),
     compact_trigger: compactTrigger(payload),
     restored: false,
@@ -830,9 +967,10 @@ function textMentionsPathReference(text, reference) {
 }
 
 function mentionedReadPaths(ctx, requiredPaths, evidenceText) {
-  const text = String(evidenceText || "");
+  const normalize = (value) => process.platform === "win32" ? String(value).replaceAll("\\", "/").toLowerCase() : String(value);
+  const text = normalize(evidenceText || "");
   return requiredPaths.filter((requiredPath) =>
-    pathReferenceVariants(ctx, requiredPath).some((reference) => textMentionsPathReference(text, reference)),
+    pathReferenceVariants(ctx, requiredPath).some((reference) => textMentionsPathReference(text, normalize(reference))),
   );
 }
 
@@ -850,6 +988,7 @@ function updateRestoreProgress(ctx, readEvidence) {
   const missingReads = required.filter((requiredPath) => !observed.has(requiredPath));
   writeJsonAtomic(path.join(ctx.continuity_dir, "last-restore-ack.json"), {
     acknowledged_at: nowIso(),
+    session_id: ctx.session_id,
     read_evidence: truncate(readEvidence, 1000),
     observed_reads: observedReads,
     missing_reads: missingReads,
@@ -868,10 +1007,10 @@ function updateRestoreProgress(ctx, readEvidence) {
 
 function isReadOfContinuity(ctx, command, candidatePaths = restoreRequiredReadPaths(ctx)) {
   const text = String(command || "").trim();
-  if (!/^(cat|sed|rg|head|tail|jq|nl|wc)\b/.test(text)) {
+  if (!/^(cat|sed|rg|head|tail|jq|nl|wc|Get-Content)\b/i.test(text)) {
     return false;
   }
-  if (/[;&|<>]/.test(text)) {
+  if (/[;&|<>\r\n`$]/.test(text)) {
     return false;
   }
   return mentionedReadPaths(ctx, candidatePaths, text).length > 0;
@@ -977,13 +1116,23 @@ function handlePostToolUse(ctx, payload) {
 }
 
 async function main() {
-  const payload = parseJson(await readStdin(), {});
+  const writingBrief = process.argv.includes("--write-brief");
+  const fileIndex = process.argv.indexOf("--file");
+  const payload = writingBrief && fileIndex !== -1
+    ? JSON.parse(fs.readFileSync(process.argv[fileIndex + 1], "utf8").replace(/^\uFEFF/, ""))
+    : parseJson(await readStdin(), {});
   const project = resolveProject(payloadCwd(payload));
   if (!project) {
     jsonOut();
     return;
   }
-  const ctx = projectContext(project);
+  const ctx = projectContext(project, payload);
+  if (writingBrief) {
+    if (readRestoreSentinel(ctx)) throw new Error("Read the session handoff before updating the brief.");
+    const brief = writeBrief(ctx, payload);
+    jsonOut({ brief_path: ctx.brief_json, updated_at: brief.updated_at, session_id: ctx.session_id });
+    return;
+  }
 
   switch (eventName(payload)) {
     case "PreCompact":
@@ -997,6 +1146,15 @@ async function main() {
       break;
     case "PostToolUse":
       handlePostToolUse(ctx, payload);
+      if (ctx.session_id && toolSucceeded(payload) && !readRestoreSentinel(ctx)) {
+        const noticePath = path.join(ctx.continuity_dir, "brief-notice.json");
+        const turn = payload.turn_id || payload.turnId || "session";
+        if (readJson(noticePath, {})?.turn_id !== turn) {
+          writeJsonAtomic(noticePath, { turn_id: turn, session_id: ctx.session_id });
+          jsonOut({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: briefMaintenanceContext(ctx) } });
+          return;
+        }
+      }
       break;
     default:
       break;

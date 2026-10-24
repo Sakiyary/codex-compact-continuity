@@ -4,8 +4,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(new URL(import.meta.url).pathname, "..");
+const root = path.resolve(fileURLToPath(import.meta.url), "..");
 const scriptPath = path.join(root, "..", "src", "compact-continuity.mjs");
 
 function writeJson(filePath, value) {
@@ -330,3 +331,39 @@ const nativeReadLatestMdAck = runHook(judgRoot, codexHome, projectsFile, {
 });
 assert.equal(nativeReadLatestMdAck.status, 0, nativeReadLatestMdAck.stderr);
 assert.equal(fs.existsSync(sentinelPath), false, "native read_file of latest.md should clear restore sentinel");
+
+runHook(judgRoot, codexHome, projectsFile, {hook_event_name: "PostCompact", cwd: judgRoot});
+const psCommand = `Get-Content -LiteralPath '${path.join(judgRoot, continuityDirName, "latest.md")}'`;
+const psPayload = {cwd: judgRoot, tool_name: "Bash", tool_input: {command: psCommand}};
+const allowedPs = runHook(judgRoot, codexHome, projectsFile, {...psPayload, hook_event_name: "PreToolUse"});
+assert.deepEqual(JSON.parse(allowedPs.stdout), {});
+for (const badCommand of [psCommand + "\nWrite-Output bad", psCommand + "; Write-Output bad", psCommand.replace("latest.md", "latest.md.bak")]) {
+  const blocked = runHook(judgRoot, codexHome, projectsFile, {...psPayload, hook_event_name: "PreToolUse", tool_input: {command: badCommand}});
+  assert.equal(JSON.parse(blocked.stdout).decision, "block");
+}
+runHook(judgRoot, codexHome, projectsFile, {...psPayload, hook_event_name: "PostToolUse", tool_response: {exit_code: 1}});
+assert.equal(fs.existsSync(sentinelPath), true, "failed reads must not clear gate");
+if (process.platform === "win32") {
+  const read = spawnSync("powershell.exe", ["-NoProfile", "-Command", psCommand], {encoding: "utf8"});
+  assert.equal(read.status, 0, read.stderr);
+  assert.match(read.stdout, /Compact Continuity Handoff/);
+}
+runHook(judgRoot, codexHome, projectsFile, {...psPayload, hook_event_name: "PostToolUse", tool_response: {exit_code: 0}});
+assert.equal(fs.existsSync(sentinelPath), false);
+console.log("continuity and PowerShell restore regression tests passed");
+
+// Identified sessions get their own snapshot and a safe brief fallback.
+// Keep these regressions in the main suite as well as the detailed brief tests.
+const isolatedSessionId = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+const isolatedSnapshot = runHook(judgRoot, codexHome, projectsFile, {
+  hook_event_name: "PreCompact",
+  trigger: "manual",
+  cwd: judgRoot,
+  session_id: isolatedSessionId,
+});
+assert.equal(isolatedSnapshot.status, 0, isolatedSnapshot.stderr);
+const isolatedLatest = readJson(path.join(judgRoot, continuityDirName, "sessions", isolatedSessionId, "latest.json"));
+assert.equal(isolatedLatest.session.session_id, isolatedSessionId, "snapshot must belong to the requested session");
+assert.equal(isolatedLatest.brief.source, "facts_only", "a session without a brief must not inherit another session's claims");
+assert.equal(isolatedLatest.handoff_envelope.structured_brief.last_request_status, "unknown");
+console.log("session snapshot and missing-brief regressions passed");

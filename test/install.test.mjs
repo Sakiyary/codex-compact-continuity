@@ -4,8 +4,9 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(new URL(import.meta.url).pathname, "..", "..");
+const root = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 const installPath = path.join(root, "scripts", "install.mjs");
 
 function readJson(filePath) {
@@ -31,7 +32,7 @@ function commandCount(hooksConfig, eventName) {
 }
 
 const tempRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "compact-continuity-install-")));
-const codexHome = path.join(tempRoot, "codex-home");
+const codexHome = path.join(tempRoot, "codex home");
 const alphaRoot = path.join(tempRoot, "alpha");
 const betaRoot = path.join(tempRoot, "beta");
 const alphaMovedRoot = path.join(tempRoot, "alpha-moved");
@@ -96,4 +97,15 @@ for (const eventName of ["PreCompact", "PostCompact", "PreToolUse", "PostToolUse
   assert.equal(commandCount(hooksConfig, eventName), 1, `${eventName} should have one compact-continuity command`);
 }
 
+const installedCommand = hooksConfig.hooks.PreCompact[0].hooks[0].command;
+const installedRun = spawnSync(process.platform === "win32" ? "powershell.exe" : "/bin/sh", process.platform === "win32" ? ["-NoProfile", "-NonInteractive", "-Command", installedCommand] : ["-c", installedCommand], {
+  cwd: alphaMovedRoot,
+  input: JSON.stringify({hook_event_name: "PreCompact", trigger: "manual", cwd: alphaMovedRoot}),
+  encoding: "utf8",
+  env: {...process.env, COMPACT_CONTINUITY_PROJECTS_FILE: "", COMPACT_CONTINUITY_PROJECTS_JSON: ""},
+});
+assert.equal(installedRun.status, 0, installedRun.stderr);
+assert.equal(readJson(path.join(alphaMovedRoot, ".codex-compact-continuity", "latest.json")).project, "Alpha");
+console.log("installed command and default project discovery passed (path containing spaces)");
+assert.equal(fs.existsSync(path.join(hookTargetDir, "LICENSE")), true, "installed copies retain the MIT license");
 console.log("install tests passed");

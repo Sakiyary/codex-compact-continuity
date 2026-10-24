@@ -2,9 +2,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import process from "node:process";
 
-const repoRoot = path.resolve(new URL(import.meta.url).pathname, "..", "..");
+const repoRoot = path.resolve(fileURLToPath(import.meta.url), "..", "..");
 const codexHome = path.resolve(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"));
 const targetDir = path.join(codexHome, "hooks", "compact-continuity");
 const hooksPath = path.join(codexHome, "hooks.json");
@@ -76,6 +77,10 @@ function parseAssignment(value, flag) {
 }
 
 function shellQuote(value) {
+  if (process.platform === "win32") {
+    if (/[\r\n]/.test(String(value))) throw new Error("Unsupported character in Windows hook path");
+    return `'${String(value).replace(/'/g, "''")}'`;
+  }
   return `"${String(value).replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
@@ -220,7 +225,7 @@ function install(options) {
   }
 
   const hookScriptPath = path.join(targetDir, "compact-continuity.mjs");
-  const command = `${shellQuote(options.nodePath)} ${shellQuote(hookScriptPath)}`;
+  const command = `${process.platform === "win32" ? "& " : ""}${shellQuote(options.nodePath)} ${shellQuote(hookScriptPath)}`;
   const projectsConfig = buildProjectsConfig(options);
   const projectsPath = path.join(targetDir, "projects.json");
   const existingProjectsConfig = readJson(projectsPath, { projects: [] });
@@ -249,6 +254,7 @@ function install(options) {
   copyFile(path.join("src", "compact-continuity.mjs"), 0o755);
   copyFile(path.join("test", "compact-continuity.test.mjs"), 0o755);
   copyFile("README.md", 0o644);
+  copyFile("LICENSE", 0o644);
   copyFile("AI_INSTALL.md", 0o644);
   copyFile("projects.example.json", 0o644);
 
